@@ -138,6 +138,7 @@ namespace {
 // recorded into the caller's command buffer. One context per render/output size, like U above.
 struct PUp {
     FfxVkPortableUpscaleContext *ctx = nullptr;
+    FfxVkPortableUpscaleCreateInfo ci = {};
     uint32_t w = 0, h = 0, ow = 0, oh = 0;
 } PU[6];
 
@@ -203,6 +204,7 @@ PUp *pcontext_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
         return nullptr;
     }
     slot->w = w, slot->h = h, slot->ow = ow, slot->oh = oh;
+    slot->ci = ci;
     rt_log("ffx: portable FSR 3 upscaling at %ux%u -> %ux%u", w, h, ow, oh);
     return slot;
 }
@@ -249,10 +251,14 @@ extern "C" int vk_ffx_upscale(VkCommandBuffer cb, const VkFfxImage *color, const
     FfxVkPortableUpscaleDispatchInfo d = {};
     d.structSize = sizeof d;
     d.commandBuffer = cb;
-    d.color = pimage(color, 0);
-    d.depth = pimage(depth, 0);
-    d.motionVectors = pimage(mv, 0);
+    d.color = pimage(color, VK_IMAGE_USAGE_SAMPLED_BIT);
+    d.depth = pimage(depth, VK_IMAGE_USAGE_SAMPLED_BIT);
+    d.motionVectors = pimage(mv, VK_IMAGE_USAGE_SAMPLED_BIT);
     d.output = pimage(out, VK_IMAGE_USAGE_STORAGE_BIT);
+    // Optional images stay empty but must carry a struct size for the portable validator.
+    d.exposure.structSize = sizeof d.exposure;
+    d.reactiveMask.structSize = sizeof d.reactiveMask;
+    d.transparencyAndCompositionMask.structSize = sizeof d.transparencyAndCompositionMask;
     d.jitterOffset = {jx, jy};
     d.motionVectorScale = {1.0f, 1.0f};
     d.renderSize = {color->width, color->height};
@@ -269,7 +275,9 @@ extern "C" int vk_ffx_upscale(VkCommandBuffer cb, const VkFfxImage *color, const
     FfxVkPortableResult r = ffxVkPortableUpscaleContextRecordDispatch(pu->ctx, &d);
     if (r != FFX_VK_PORTABLE_OK) {
         static int told;
-        if (told++ < 8) rt_log("ffx: portable FSR 3 dispatch failed (%d)", (int)r);
+        if (told++ < 8)
+            rt_log("ffx: portable FSR 3 dispatch failed (%d, validation %#llx)", (int)r,
+                   (unsigned long long)ffxVkPortableValidateUpscaleDispatchInfo(&pu->ci, &d));
         return 0;
     }
     return 1;
