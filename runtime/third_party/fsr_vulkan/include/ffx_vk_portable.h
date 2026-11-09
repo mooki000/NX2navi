@@ -113,6 +113,7 @@ typedef struct FfxVkPortableImage {
     VkImageUsageFlags usage;
     VkImageAspectFlags aspect;
     FfxVkPortableResourceState state;
+    VkImageView view;
 } FfxVkPortableImage;
 
 /* Application-owned buffer metadata for provider-neutral contracts. The

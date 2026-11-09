@@ -1,3 +1,4 @@
+#include "ffx_1_1_4_portability.hpp" // NX2navi Linux port: MSVC CRT shims, see src/ffx_1_1_4_portability.hpp
 // This file is part of the FidelityFX SDK.
 //
 // Copyright (C) 2024 Advanced Micro Devices, Inc.
