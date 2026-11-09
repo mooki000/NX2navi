@@ -9,6 +9,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#include <atomic>
 #include <math.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -40,6 +41,19 @@ struct Api {
     PfnFfxDispatch dispatch = nullptr;
     int tried = 0, ok = 0, dll = 0;   // ok: upscaling available (DLL on Windows, portable elsewhere); dll: frame-gen API
 } A;
+
+// What the settings menu may ask before anything has used FSR 3.1 (vk_ffx_available), from any thread.
+std::atomic<int> g_loaded{-1};    // what vk_ffx_load found: 1 or 0; -1 while it has not run
+std::atomic<int> g_present{-1};   // whether the library file is there: 1 or 0; -1 while not asked
+
+#ifdef _WIN32
+// amd_fidelityfx_vk.dll next to the executable
+void library_path(char *path, size_t size) {
+    DWORD n = GetModuleFileNameA(NULL, path, (DWORD)size);
+    while (n && path[n - 1] != '\\') n--;
+    snprintf(path + n, size - n, "amd_fidelityfx_vk.dll");
+}
+#endif
 
 void message(uint32_t type, const wchar_t *msg) {
     char s[512];
@@ -216,12 +230,11 @@ extern "C" int vk_ffx_load(void) {
     A.tried = 1;
 #ifdef _WIN32
     char path[MAX_PATH];
-    DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
-    while (n && path[n - 1] != '\\') n--;
-    snprintf(path + n, sizeof path - n, "amd_fidelityfx_vk.dll");
+    library_path(path, sizeof path);
     HMODULE m = LoadLibraryA(path);
     if (!m) {
         rt_log("ffx: %s not found: FSR 3.1 off", path);
+        g_loaded.store(0, std::memory_order_release);
         return 0;
     }
     A.lib = m;
@@ -238,7 +251,36 @@ extern "C" int vk_ffx_load(void) {
     A.ok = 1;
     rt_log("ffx: portable FSR 3 (vendored, MIT) available");
 #endif
+    g_loaded.store(A.ok, std::memory_order_release);
     return A.ok;
+}
+
+extern "C" int vk_ffx_available(void) {
+    int loaded = g_loaded.load(std::memory_order_acquire);
+    if (loaded >= 0) return loaded;
+#ifdef _WIN32
+    int present = g_present.load(std::memory_order_relaxed);
+    if (present < 0) {   // the menu asks every frame: look once, and leave the loading to the first use
+        char path[MAX_PATH];
+        library_path(path, sizeof path);
+        DWORD attr = GetFileAttributesA(path);
+        present = attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+        g_present.store(present, std::memory_order_relaxed);
+    }
+    return present;
+#else
+    return 1;   // the portable FSR 3 upscaler is linked in: nothing to load
+#endif
+}
+
+// Frame generation runs through the DLL's own API calls (vk_ffx_create and the rest below), which only the Windows build
+// loads: the portable upscaler elsewhere has no frame generation.
+extern "C" int vk_ffx_framegen_available(void) {
+#ifdef _WIN32
+    return vk_ffx_available();
+#else
+    return 0;
+#endif
 }
 
 extern "C" int vk_ffx_upscale(VkCommandBuffer cb, const VkFfxImage *color, const VkFfxImage *depth, const VkFfxImage *mv,

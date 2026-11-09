@@ -96,6 +96,10 @@ processor can fill memory and swap until the kernel stops processes of the deskt
 On NVIDIA, start the game with `NX2NAVI_SHADOW=0` if the 3D world stays black while the HUD draws (issue #72). The
 profile, logs and settings are in the `--out` folder as on Windows.
 
+On Linux FSR 3.1 upscaling runs through the portable FSR 3 built into the game (`runtime/third_party/fsr_vulkan`).
+FSR 3.1 frame generation needs AMD's `amd_fidelityfx_vk.dll`, which only the Windows build can use: on Linux the menu
+does not offer it, and `framegen = fsr3` in `nx2navi.ini` leaves the swapchain as it is (the log says so).
+
 `tools/make_appimage.py` packs this kit into one `NX2navi-Linux-<version>-x86_64.AppImage` with its own Python, for
 players without a source checkout: it checks for the packages above, installs zbic with pip on its first run, picks
 `--jobs` from the memory, builds into `~/Games/Ocarina` (or the folder given after the dump) and writes `play.sh`
@@ -109,9 +113,9 @@ beside the game.
   it lasts at most about 20 seconds once the shaders are translated, and the remaining pipelines are built in the
   background while you play.
 - **Screen** in the menu has Upscaling (DLSS on NVIDIA RTX cards, FSR 3.1 on any card), Frame generation (NVIDIA DLSS
-  on RTX 40 and 50 cards, with a DLSS multiplier of 2x, or 3x and 4x on RTX 50 cards; FSR 3.1 on any card; it needs
-  DLSS or FSR 3.1 upscaling on, and the frame limit then counts the frames on screen; with no limit chosen it is the
-  display's refresh rate), HDR (the game's picture tone mapped to your display, with its own grading rows, or Native, the game's own HDR; turn HDR on in Windows first) and the
+  on RTX 40 and 50 cards, with a DLSS multiplier of 2x, or 3x and 4x on RTX 50 cards; FSR 3.1 on any card where
+  `amd_fidelityfx_vk.dll` loads; it needs DLSS or FSR 3.1 upscaling on, and the frame limit then counts the
+  frames on screen; with no limit chosen it is the display's refresh rate), HDR (the game's picture tone mapped to your display, with its own grading rows, or Native, the game's own HDR; turn HDR on in Windows first) and the
   resolution. Those marked "after restart" take effect when the game starts again.
 - **Controls** in the menu has Button prompts: the game's own, or Xbox, PlayStation or keyboard and mouse ones when
   the build drew them (a kit with `prompt-art`). It takes effect after a restart. The keyboard and mouse prompts show

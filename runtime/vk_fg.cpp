@@ -79,12 +79,18 @@ void fail(const char *what, unsigned r) {
 }  // namespace
 
 // Follows the setting: gfx_present.c's window_settings_live remakes the swapchain when this stops matching vk_fg_active.
-// It needs DLSS's or FSR 3.1's motion vectors, so it also needs one of them on. Not on a device made through
+// It needs DLSS's or FSR 3.1's motion vectors, so it also needs one of them on, and the FSR 3.1 library: a build
+// without it keeps the plain swapchain whatever the setting says, with one line in the log. Not on a device made through
 // Streamline's proxies (NVIDIA's frame generation set at the start, vk_dlssg_dpa): AMD's swapchain there crashed in
 // NVIDIA's driver when the menu switched from NVIDIA's frame generation to AMD's. That switch waits for a restart,
 // as the menu says (menu.cpp row_framegen).
 extern "C" int vk_fg_wanted(void) {
-    return !strcmp(cfg_value("NX2NAVI_FRAMEGEN"), "fsr3") && cfg_bool("NX2NAVI_DLAA") && vk_dlaa_wanted() && !vk_dlssg_dpa();
+    if (strcmp(cfg_value("NX2NAVI_FRAMEGEN"), "fsr3") || !cfg_bool("NX2NAVI_DLAA") || !vk_dlaa_wanted() || vk_dlssg_dpa()) return 0;
+    if (vk_ffx_framegen_available()) return 1;
+    static int told;
+    if (!__atomic_exchange_n(&told, 1, __ATOMIC_RELAXED))
+        rt_log("fg: AMD FSR 3.1 frame generation is set, but it is not available here: off");
+    return 0;
 }
 
 // Always the three queues: the setting can be switched on during a run, and idle queues cost nothing.
