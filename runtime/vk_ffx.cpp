@@ -18,6 +18,9 @@
 #include "third_party/ffx_api/ffx_api.h"
 #include "third_party/ffx_api/ffx_upscale.h"
 #include "third_party/ffx_api/vk/ffx_api_vk.h"
+#ifndef _WIN32
+#include "ffx_vk_portable.h"   // vendored portable FSR 3 (third_party/fsr_vulkan, MIT): no DLL on Linux
+#endif
 
 extern "C" {
 #include "cfg.h"
@@ -35,7 +38,7 @@ struct Api {
     PfnFfxConfigure configure = nullptr;
     PfnFfxQuery query = nullptr;
     PfnFfxDispatch dispatch = nullptr;
-    int tried = 0, ok = 0;
+    int tried = 0, ok = 0, dll = 0;   // ok: upscaling available (DLL on Windows, portable elsewhere); dll: frame-gen API
 } A;
 
 void message(uint32_t type, const wchar_t *msg) {
@@ -129,6 +132,83 @@ Up *context_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
 
 }  // namespace
 
+#ifndef _WIN32
+namespace {
+// Portable FSR 3 upscaling on non-Windows (ffx_vk_portable_t, vendored MIT): the same inputs the DLL path takes,
+// recorded into the caller's command buffer. One context per render/output size, like U above.
+struct PUp {
+    FfxVkPortableUpscaleContext *ctx = nullptr;
+    uint32_t w = 0, h = 0, ow = 0, oh = 0;
+} PU[6];
+
+FfxVkPortableImage pimage(const VkFfxImage *i, VkImageUsageFlags usage) {
+    FfxVkPortableImage im = {};
+    im.structSize = sizeof im;
+    im.image = i->image;
+    im.format = i->format;
+    im.extent = {i->width, i->height};
+    im.mipCount = 1;
+    im.arrayLayers = 1;
+    im.usage = usage;
+    im.aspect = i->format == VK_FORMAT_D32_SFLOAT ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+    im.state = FFX_VK_PORTABLE_RESOURCE_STATE_UNORDERED_ACCESS;   // every image is in GENERAL
+    return im;
+}
+
+PUp *pcontext_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
+    for (PUp &u : PU)
+        if (u.ctx && u.w == w && u.h == h && u.ow == ow && u.oh == oh) return &u;
+    PUp *slot = nullptr;
+    for (PUp &u : PU)
+        if (!u.ctx) { slot = &u; break; }
+    if (!slot) return nullptr;
+    const VkCtx *c = vk_ctx();
+    VkPhysicalDeviceFeatures2 f2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    VkPhysicalDeviceVulkan13Features v13 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
+    VkPhysicalDeviceVulkan12Features v12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+    VkPhysicalDevice16BitStorageFeatures f16 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES};
+    VkPhysicalDeviceDescriptorIndexingFeatures di_f = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES};
+    v13.pNext = &v12;
+    v12.pNext = &f16;
+    f16.pNext = &di_f;
+    f2.pNext = &v13;
+    vkGetPhysicalDeviceFeatures2(c->phys, &f2);
+    FfxVkPortableDeviceInfo di = {};
+    di.structSize = sizeof di;
+    di.instance = c->instance;
+    di.physicalDevice = c->phys;
+    di.device = c->device;
+    di.getDeviceProcAddr = vkGetDeviceProcAddr;
+    di.queue = c->gfx_queue;
+    di.queueFamilyIndex = c->gfx_family;
+    di.shaderFloat16Enabled = f16.storageInputOutput16 ? VK_TRUE : VK_FALSE;
+    di.subgroupSizeControlEnabled = v13.subgroupSizeControl ? VK_TRUE : VK_FALSE;
+    di.computeFullSubgroupsEnabled = v13.computeFullSubgroups ? VK_TRUE : VK_FALSE;
+    di.synchronization2Enabled = v13.synchronization2 ? VK_TRUE : VK_FALSE;   // required by vk_device.c
+    di.bufferMarkerEnabled = c->has_buffer_marker ? VK_TRUE : VK_FALSE;
+    di.debugUtilsEnabled = c->validation ? VK_TRUE : VK_FALSE;
+    di.shaderStorageBufferArrayNonUniformIndexingEnabled =
+        di_f.shaderStorageBufferArrayNonUniformIndexing ? VK_TRUE : VK_FALSE;
+    di.shaderStorageImageWriteWithoutFormatEnabled = f2.features.shaderStorageImageWriteWithoutFormat ? VK_TRUE : VK_FALSE;
+    FfxVkPortableUpscaleCreateInfo ci = {};
+    ci.structSize = sizeof ci;
+    ci.flags = FFX_VK_PORTABLE_CONTEXT_HDR_COLOR_INPUT | FFX_VK_PORTABLE_CONTEXT_DEPTH_INFINITE |
+               FFX_VK_PORTABLE_CONTEXT_AUTO_EXPOSURE | FFX_VK_PORTABLE_CONTEXT_JITTERED_MOTION_VECTORS;
+    ci.maxRenderSize = {w, h};
+    ci.maxOutputSize = {ow, oh};
+    FfxVkPortableResult r = ffxVkPortableUpscaleContextCreate(&di, &ci, &slot->ctx);
+    if (r != FFX_VK_PORTABLE_OK) {
+        rt_log("ffx: portable FSR 3 context creation at %ux%u -> %ux%u failed (%d)", w, h, ow, oh, (int)r);
+        slot->ctx = nullptr;
+        return nullptr;
+    }
+    slot->w = w, slot->h = h, slot->ow = ow, slot->oh = oh;
+    rt_log("ffx: portable FSR 3 upscaling at %ux%u -> %ux%u", w, h, ow, oh);
+    return slot;
+}
+}  // namespace
+#endif
+
 extern "C" int vk_ffx_load(void) {
     if (A.tried) return A.ok;
     A.tried = 1;
@@ -148,15 +228,52 @@ extern "C" int vk_ffx_load(void) {
     A.configure = (PfnFfxConfigure)(void *)GetProcAddress(m, "ffxConfigure");
     A.query = (PfnFfxQuery)(void *)GetProcAddress(m, "ffxQuery");
     A.dispatch = (PfnFfxDispatch)(void *)GetProcAddress(m, "ffxDispatch");
-#endif
-    A.ok = A.create && A.destroy && A.configure && A.query && A.dispatch;
+    A.ok = A.dll = A.create && A.destroy && A.configure && A.query && A.dispatch;
     rt_log("ffx: amd_fidelityfx_vk.dll %s", A.ok ? "loaded" : "lacks the API entry points: FSR 3.1 off");
+#else
+    // Non-Windows: the portable FSR 3 implementation is linked in (third_party/fsr_vulkan, MIT), so the
+    // upscaler is always available; frame generation (vk_fg.cpp) still needs the DLL API and stays off.
+    A.ok = 1;
+    rt_log("ffx: portable FSR 3 (vendored, MIT) available");
+#endif
     return A.ok;
 }
 
 extern "C" int vk_ffx_upscale(VkCommandBuffer cb, const VkFfxImage *color, const VkFfxImage *depth, const VkFfxImage *mv,
                               const VkFfxImage *out, float jx, float jy, int reset, float dt_ms, float fov_y) {
     if (!vk_ffx_load()) return 0;
+#ifndef _WIN32
+    PUp *pu = pcontext_for(color->width, color->height, out->width, out->height);
+    if (!pu) return 0;
+    int sharp = cfg_int("NX2NAVI_SHARPNESS");
+    FfxVkPortableUpscaleDispatchInfo d = {};
+    d.structSize = sizeof d;
+    d.commandBuffer = cb;
+    d.color = pimage(color, 0);
+    d.depth = pimage(depth, 0);
+    d.motionVectors = pimage(mv, 0);
+    d.output = pimage(out, VK_IMAGE_USAGE_STORAGE_BIT);
+    d.jitterOffset = {jx, jy};
+    d.motionVectorScale = {1.0f, 1.0f};
+    d.renderSize = {color->width, color->height};
+    d.outputSize = {out->width, out->height};
+    d.frameTimeMilliseconds = dt_ms;
+    d.preExposure = 1.0f;
+    d.reset = reset ? VK_TRUE : VK_FALSE;
+    d.cameraNear = 0.1f;
+    d.cameraFar = 1e8f;
+    d.cameraVerticalFovRadians = fov_y > 0 ? fov_y : 1.0f;
+    d.viewSpaceToMeters = 0.01f;
+    d.sharpness = sharp > 100 ? 1.0f : sharp / 100.0f;
+    d.enableSharpening = sharp > 0 ? VK_TRUE : VK_FALSE;
+    FfxVkPortableResult r = ffxVkPortableUpscaleContextRecordDispatch(pu->ctx, &d);
+    if (r != FFX_VK_PORTABLE_OK) {
+        static int told;
+        if (told++ < 8) rt_log("ffx: portable FSR 3 dispatch failed (%d)", (int)r);
+        return 0;
+    }
+    return 1;
+#else
     Up *u = context_for(color->width, color->height, out->width, out->height);
     if (!u) return 0;
     ffxDispatchDescUpscale d = {};
@@ -189,24 +306,29 @@ extern "C" int vk_ffx_upscale(VkCommandBuffer cb, const VkFfxImage *color, const
         return 0;
     }
     return 1;
+#endif
 }
 
 extern "C" ffxReturnCode_t vk_ffx_create(ffxContext *ctx, ffxCreateContextDescHeader *desc) {
-    return vk_ffx_load() ? A.create(ctx, desc, nullptr) : FFX_API_RETURN_ERROR;
+    return A.dll ? A.create(ctx, desc, nullptr) : FFX_API_RETURN_ERROR;
 }
-extern "C" ffxReturnCode_t vk_ffx_destroy(ffxContext *ctx) { return A.ok ? A.destroy(ctx, nullptr) : FFX_API_RETURN_ERROR; }
+extern "C" ffxReturnCode_t vk_ffx_destroy(ffxContext *ctx) { return A.dll ? A.destroy(ctx, nullptr) : FFX_API_RETURN_ERROR; }
 extern "C" ffxReturnCode_t vk_ffx_configure(ffxContext *ctx, const ffxConfigureDescHeader *desc) {
-    return A.ok ? A.configure(ctx, desc) : FFX_API_RETURN_ERROR;
+    return A.dll ? A.configure(ctx, desc) : FFX_API_RETURN_ERROR;
 }
 extern "C" ffxReturnCode_t vk_ffx_query(ffxContext *ctx, ffxQueryDescHeader *desc) {
-    return A.ok ? A.query(ctx, desc) : FFX_API_RETURN_ERROR;
+    return A.dll ? A.query(ctx, desc) : FFX_API_RETURN_ERROR;
 }
 extern "C" ffxReturnCode_t vk_ffx_dispatch(ffxContext *ctx, const ffxDispatchDescHeader *desc) {
-    return A.ok ? A.dispatch(ctx, desc) : FFX_API_RETURN_ERROR;
+    return A.dll ? A.dispatch(ctx, desc) : FFX_API_RETURN_ERROR;
 }
 
 extern "C" void vk_ffx_release(void) {
-    if (!A.ok) return;
-    for (Up &u : U)
-        if (u.ctx) A.destroy(&u.ctx, nullptr), u.ctx = nullptr;
+    if (A.dll)
+        for (Up &u : U)
+            if (u.ctx) A.destroy(&u.ctx, nullptr), u.ctx = nullptr;
+#ifndef _WIN32
+    for (PUp &u : PU)
+        if (u.ctx) ffxVkPortableUpscaleContextDestroy(u.ctx), u.ctx = nullptr;
+#endif
 }
