@@ -24,7 +24,8 @@ chosen. For each file the switched-on restorations edit, the engine (`runtime/re
 game would read it (a mod's version, else the original), unpacks it (zstd, with the dictionary of its id from
 `Pack/ZsDic.pack.zs`), adds the pack members it gains (`runtime/sarc.c`), parses the BYML (`runtime/byml.c`), or each
 BYML member of a pack the edits name, applies the edits, writes the BYML back, reads it back to check it holds what was
-meant, and packs it as the original was. A copy from another file reads that file the same way. `romfs.c` serves the
+meant, and packs it as the original was; a message file (MSBT, `runtime/msbt.c`) member of a text archive gets its
+messages replaced instead. A copy from another file reads that file the same way. `romfs.c` serves the
 result from `<profile>/restore/<folder>/` and raises the file's entry in the resource size table when it grew, gives an
 added member an entry of its own when the table has none for its path, and raises the entry of a pack member the edits
 made larger: the game sizes the member's buffer from it (without, a Heart Piece whose ActorParam grew by one text
@@ -41,7 +42,8 @@ compound holds.
 
 An edit applies only when what it names is there as declared: an object by its `Hash`, `Gyaml` and `Translate` (within
 1 cm, in the file that places it), a value or text at what the game ships, a key it adds missing from a dict that is
-there, a member it adds missing from the pack. Anything else (another game version, a mod that changed the file) skips
+there, a member it adds missing from the pack, a message whose bytes hash to the declared value. Anything else
+(another game version, a mod that changed the file) skips
 that edit, and the log says which and why (`restore: <KEY>: <file>: ...`); the other edits still apply. Each document,
 the file or one pack member, is checked on its own: one that does not read back as edited, or a member that cannot be
 put back into its pack, loses its own edits, and the file is served with the other members' edits. When the file
@@ -92,6 +94,9 @@ static const RestoreEdit edits[] = {
     // add a pack member: a copy of another pack's (NULL: this pack's), or bytes declared in an array
     RESTORE_COPY_MEMBER("Pack/Actor/Obj_W.pack.zs", "Component/LiftableParam/Obj_V.game__component__LiftableParam.bgyml",
                         "Pack/Actor/Obj_V.pack.zs", "Component/LiftableParam/Obj_V.game__component__LiftableParam.bgyml"),
+    // replace a message of a text archive's MSBT: its label, the msbt_hash of the game's message, ours
+    RESTORE_SET_MESSAGE("Mals/USen.Product.110.sarc.zs", "EventFlowMsg/NaviHint_Enemy.msbt", "Enemy_X",
+                        0x0123456789abcdefull, "Name\nHint"),
 };
 
 RESTORATION(name, "KEY", "Menu label", "One-line description for the menu.", edits);
@@ -108,7 +113,12 @@ RESTORATION(name, "KEY", "Menu label", "One-line description for the menu.", edi
   need nothing else.
 - An added member's bytes come from the player's files (a copy) or from the restoration's declaration; declared bytes
   must be our own, never data taken from the game.
+- A message (`RESTORE_SET_MESSAGE`) is named by its label and the 64-bit FNV-1a hash of its bytes as the game ships
+  them (`msbt_hash`, `runtime/msbt.h`): the restoration holds no game text. The message keeps its leading control tags
+  (the window, Navi's voice) and the rest becomes the declared text, UTF-8 with a control tag written
+  `{group.type:hex parameters}` and a closing one `{/group.type}`; the file's encoding (UTF-8 or UTF-16) is kept. The
+  probe prints the hash it found when it skips an edit for another message.
 - Run `--probe-restore` on a game build: every edit of the new restoration should say what it did.
 
-Not yet possible: removing a key or a pack member, adding dicts or array items, editing logic graphs (`.ainb`), text
-(`Mals/`) or binary files (models, textures, collision).
+Not yet possible: removing a key or a pack member, adding dicts or array items, editing logic graphs (`.ainb`) or
+binary files (models, textures, collision).

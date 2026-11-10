@@ -1,10 +1,11 @@
 // Restorations (restore.c, docs/restorations.md): behaviours of the original game that this release changed, each a
-// switch of its own, NX2NAVI_RESTORE_<KEY> = 1 (nx2navi.ini [restorations], the Restorations tab of the menu). One is
-// a list of edits to the player's own game files: remove a placed object, add a copy of one (placed in the same file
-// or in another), set a number, bool or text in a placement or in a BYML member of an actor pack (also under a key
-// that is not there yet), add a member to a pack. Once at start, romfs.c applies the edits of the switched-on
-// restorations to each file as the game would read it (a mod's version, else the original) and serves the result from
-// <profile>/restore/; an edit that does not find what it names is skipped and logged, never applied elsewhere.
+// switch of its own, NX2NAVI_RESTORE_<KEY> = 1 (nx2navi.ini [restorations], the Restorations tab of the menu). One is a
+// list of edits to the player's own game files: remove a placed object, add a copy of one (placed in the same file or
+// in another), set a number, bool or text in a placement or in a BYML member of an actor pack (also under a key that is
+// not there yet), add a member to a pack, replace a message of a text archive. Once at start, romfs.c applies the edits
+// of the switched-on restorations to each file as the game would read it (a mod's version, else the original) and
+// serves the result from <profile>/restore/; an edit that does not find what it names is skipped and logged, never
+// applied elsewhere.
 //
 // A restoration is declared in a file of its own, runtime/restore_<name>.c:
 //
@@ -20,12 +21,14 @@
 
 typedef enum {
     RESTORE_KIND_SET = 1, RESTORE_KIND_REMOVE, RESTORE_KIND_ADD, RESTORE_KIND_SET_TEXT, RESTORE_KIND_ADD_MEMBER,
+    RESTORE_KIND_SET_MESSAGE,
 } RestoreKind;
 
 typedef struct {
     RestoreKind kind;
     const char *file;     // RomFS path of a placement file or other BYML (".zs" ones are unpacked), or of a pack
-    const char *member;   // the BYML member of that pack (ADD_MEMBER: the member added), NULL for a file that is a BYML
+    // the BYML member of that pack (ADD_MEMBER: the member added; SET_MESSAGE: the MSBT); NULL: the file is a BYML
+    const char *member;
     // The placed object an edit is about, as the game ships it: its Gyaml, its Hash and its Translate (each within
     // 1 cm). hash 0: a SET on the document itself (a pack member's parameters).
     const char *gyaml;
@@ -51,6 +54,10 @@ typedef struct {
     const void *bytes;
     size_t nbytes;
     const char *from_member;
+    // SET_MESSAGE: the message labelled path in the MSBT member, which the game ships as bytes whose msbt_hash (msbt.h:
+    // FNV-1a, 64 bits) is text_hash, becomes text_now: its leading control tags (window, voice) stay, the rest is
+    // replaced (UTF-8; a control tag written {group.type:hex parameters}, a closing one {/group.type}).
+    uint64_t text_hash;
 } RestoreEdit;
 
 typedef struct {
@@ -99,6 +106,11 @@ typedef struct {
     {.kind = RESTORE_KIND_ADD_MEMBER, .file = file_, .member = member_, .bytes = data, .nbytes = sizeof data}
 #define RESTORE_COPY_MEMBER(file_, member_, src, src_member) \
     {.kind = RESTORE_KIND_ADD_MEMBER, .file = file_, .member = member_, .from = src, .from_member = src_member}
+// Replace the message labelled label in the MSBT member of a text archive (Mals/<language>.Product.<n>.sarc.zs): the
+// game's message hashes to hash (msbt_hash of its bytes as stored), ours is text (its leading control tags stay).
+#define RESTORE_SET_MESSAGE(file_, member_, label, hash, text)                                                     \
+    {.kind = RESTORE_KIND_SET_MESSAGE, .file = file_, .member = member_, .path = label, .text_hash = hash,       \
+     .text_now = text}
 
 // The registry: every RESTORATION of the linked objects meets in one section (as host.h's HOST_OVERRIDE entries do),
 // which restore.c walks: on PE/COFF ".rst$m", sorted between restore.c's ".rst$a" and ".rst$z" markers; on ELF

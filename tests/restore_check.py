@@ -6,7 +6,8 @@ Windows: python tests/restore_check.py --toolchain C:/msys64/ucrt64
 Writes fixtures with an encoder of its own (BYML laid out parents first and nothing shared, unlike the engine's
 writer): a placement file packed with a zstd dictionary (Pack/ZsDic.pack.zs's role is played by a SARC of two
 trained dictionaries), a pack (SARC) of BYML members and raw bytes, the files edits copy from (another placement,
-another pack) or check against (an area's other placement file, its static compound), and files that are not what
+another pack) or check against (an area's other placement file, its static compound), a text archive of message
+files, and files that are not what
 they claim. tests/restore_check.c runs the engine's edits of every kind on them, prints each note and checks which
 applied, feeds the parser, the engine and the SARC reader and writer every cut length of them and damaged copies,
 checks that dicts out of order are refused, and runs restore.c's switches, a start and the probe with the settings,
@@ -298,6 +299,81 @@ def sarc_decode(d):
     return res
 
 
+# ---- MSBT: a message is a list of parts, str for text, (group, type, bytes) for a control tag, (group, type) for a
+# closing tag; the 0 unit that ends it is added
+def msbt_message(parts, wide=False):
+    out = bytearray()
+    for p in parts:
+        if isinstance(p, str):
+            out += p.encode('utf-16-le' if wide else 'utf-8')
+        elif len(p) == 3:
+            out += (b'\x0e\x00' if wide else b'\x0e') + struct.pack('<HHH', p[0], p[1], len(p[2])) + p[2]
+        else:
+            out += (b'\x0f\x00' if wide else b'\x0f') + struct.pack('<HH', p[0], p[1])
+    return bytes(out + (b'\0\0' if wide else b'\0'))
+
+
+def msbt_hash(b):
+    h = 0xcbf29ce484222325
+    for x in b: h = ((h ^ x) * 0x100000001b3) & 0xffffffffffffffff
+    return h
+
+
+def msbt_encode(messages, wide=False, before=b'', after=b''):
+    """messages: [(label, bytes)], the message index being the order; before / after: the data of an ATR1 section
+    between LBL1 and TXT2 and of a TSY1 section after TXT2 (none when empty). Labels sit in 7 hash buckets."""
+    buckets = [[] for _ in range(7)]
+    for i, (label, _) in enumerate(messages):
+        h = 0
+        for c in label.encode(): h = (h * 0x492 + c) & 0xffffffff
+        buckets[h % 7].append((label, i))
+    lbl, blobs = bytearray(struct.pack('<I', 7)), bytearray()
+    for b in buckets:
+        lbl += struct.pack('<II', len(b), 4 + 8 * 7 + len(blobs))
+        for label, i in b: blobs += bytes([len(label)]) + label.encode() + struct.pack('<I', i)
+    lbl += blobs
+    txt = bytearray(struct.pack('<I', len(messages)))
+    at = 4 + 4 * len(messages)
+    for _, m in messages:
+        txt += struct.pack('<I', at)
+        at += len(m)
+    for _, m in messages: txt += m
+    secs = [(b'LBL1', lbl)] + ([(b'ATR1', before)] if before else []) + [(b'TXT2', txt)] + \
+        ([(b'TSY1', after)] if after else [])
+    body = bytearray()
+    for name, data in secs:
+        body += name + struct.pack('<I', len(data)) + b'\0' * 8 + data
+        while len(body) % 16: body.append(0xab)
+    head = b'MsgStdBn\xff\xfe\0\0' + bytes([1 if wide else 0, 3]) + struct.pack('<HHI', len(secs), 0, 0x20 + len(body))
+    return head + b'\0' * (0x20 - len(head)) + bytes(body)
+
+
+def msbt_decode(d):
+    """(encoding byte, {label: message bytes}, {section name: data}); checks the size field and the AB padding."""
+    assert d[:10] == b'MsgStdBn\xff\xfe' and struct.unpack_from('<I', d, 0x12)[0] == len(d), 'MSBT header'
+    secs, o = {}, 0x20
+    for _ in range(struct.unpack_from('<H', d, 0xe)[0]):
+        size = struct.unpack_from('<I', d, o + 4)[0]
+        secs[d[o:o + 4].decode()] = d[o + 16:o + 16 + size]
+        o += 16 + size
+        pad = (16 - o % 16) % 16
+        assert d[o:o + pad] == b'\xab' * pad, 'MSBT section padding'
+        o += pad
+    assert o == len(d), 'MSBT data past the last section'
+    lbl, txt = secs['LBL1'], secs['TXT2']
+    n = struct.unpack_from('<I', txt, 0)[0]
+    offs = list(struct.unpack_from('<%dI' % n, txt, 4)) + [len(txt)]
+    labels = {}
+    for b in range(struct.unpack_from('<I', lbl, 0)[0]):
+        cnt, off = struct.unpack_from('<II', lbl, 4 + 8 * b)
+        for _ in range(cnt):
+            ln = lbl[off]
+            i = struct.unpack_from('<I', lbl, off + 1 + ln)[0]
+            labels[lbl[off + 1:off + 1 + ln].decode()] = txt[offs[i]:offs[i + 1]]
+            off += 1 + ln + 4
+    return d[0xc], labels, secs
+
+
 # ---- fixtures and what the edits should make of them
 def placement():
     return {
@@ -372,10 +448,45 @@ def pack_members():
         {'A/one.bgyml': 8, 'B/two.bin': 0x100, 'C/three.bgyml': 0x80}
 
 
+NAVI = [(3, 0, b'\x0f\x01\x00'), (4, 0, b'\x0c\x00Attention_00\x00')]   # leading tags: window, Navi's voice
+
+
+def text_messages():
+    """The two MSBT members of the text archive: {member: [(label, message bytes)]}. tests/restore_check.c names
+    these messages by their msbt_hash, which main() checks against the constants it holds."""
+    navi = [('Enemy_A', NAVI + ['That thing looks like you!\nShould we call it ', (0, 3, b'\0\0'), 'Dark One',
+                                (0, 3, b'\xff\xff'), '?']),
+            ('Enemy_B', [(4, 0, b'\x05\x00Happy\x00'), 'Another enemy.']),
+            ('Enemy_C', [(3, 0, b'\x0f\x01\x00'), 'Third.']),
+            ('Plain', ['No tags at all.'])]
+    wide = [('W0', [(4, 0, b'\x02\x00Hi\x00'), 'Wide text']), ('W1', ['Second'])]
+    return {'Msg/Navi.msbt': [(l, msbt_message(p)) for l, p in navi],
+            'Msg/Wide.msbt': [(l, msbt_message(p, True)) for l, p in wide]}
+
+
+def text_expected():
+    """What tests/restore_check.c's edits make of them: each changed message keeps its leading tags."""
+    m = {k: dict(v) for k, v in text_messages().items()}
+    m['Msg/Navi.msbt']['Enemy_A'] = msbt_message(NAVI + [(0, 3, b'\0\0'), 'Dark One', (0, 3, b'\xff\xff'),
+                                                         '\nConquer yourself!'])
+    m['Msg/Navi.msbt']['Enemy_C'] = msbt_message([(3, 0, b'\x0f\x01\x00'), '自分自身に', (1, 2, b'\x0a\x0b'), '打ち勝つ',
+                                                  (1, 2), '！'])
+    m['Msg/Navi.msbt']['Plain'] = msbt_message([])
+    m['Msg/Wide.msbt']['W0'] = msbt_message([(4, 0, b'\x02\x00Hi\x00'), 'Wide ', (0, 3, b'\0\0'), 'ж',
+                                             (0, 3, b'\xff\xff'), ' \U0001F600\nline'], True)
+    return m
+
+
+# The hashes tests/restore_check.c declares (msbt_hash of the game's message, as a restoration names it)
+TEXT_HASHES = {('Msg/Navi.msbt', 'Enemy_A'): 0xa07a3f64afb3b6e0, ('Msg/Navi.msbt', 'Enemy_B'): 0x410786bdd54ba4d3,
+               ('Msg/Navi.msbt', 'Enemy_C'): 0x25f7f232d73044d2, ('Msg/Navi.msbt', 'Plain'): 0xe801dbf933a05e5d,
+               ('Msg/Wide.msbt', 'W0'): 0x7ab759bfc5845b1b}
+
+
 def build(cc, flags, env):
     exe = OUT / ('restore-check.exe' if os.name == 'nt' else 'restore-check')
     srcs = [ROOT / 'tests' / 'restore_check.c'] + [ROOT / 'runtime' / n
-                                                   for n in ('restore.c', 'restore_engine.c', 'byml.c', 'sarc.c')]
+                                                   for n in ('restore.c', 'restore_engine.c', 'byml.c', 'sarc.c', 'msbt.c')]
     subprocess.run([cc, '-std=gnu11', '-O1', '-g', '-fno-strict-aliasing', '-Wall', '-Wextra', '-Werror',
                     '-fsanitize=address,undefined' if os.name != 'nt' else '-O1',
                     '-I', str(ROOT / 'runtime'), *map(str, srcs), '-o', str(exe), *flags, '-lm'],
@@ -425,6 +536,15 @@ def main():
     (OUT / 'compound.bphsc').write_bytes(b'static compound ' + struct.pack('<Q', 1003) + b' rest')
     x_member = byml_encode({'Liftable': True, 'Pos': [F32(0.0), F32(0.5), F32(0.0)]})
     (OUT / 'pack2.zs').write_bytes(compress(sarc_encode([('X/x.bgyml', x_member)], {'X/x.bgyml': 0x40})))
+    # A text archive: two message files (UTF-8 with sections around the texts, UTF-16) and a BYML member.
+    tm = text_messages()
+    navi_msbt = msbt_encode(tm['Msg/Navi.msbt'], before=b'\x01\x02\x03\x04\x05', after=b'style')
+    wide_msbt = msbt_encode(tm['Msg/Wide.msbt'], wide=True)
+    text_members = [('Msg/Navi.msbt', navi_msbt), ('Msg/Wide.msbt', wide_msbt), ('A/one.bgyml', members[0][1])]
+    text_aligns = {'Msg/Navi.msbt': 0x10, 'Msg/Wide.msbt': 0x10, 'A/one.bgyml': 8}
+    (OUT / 'text.zs').write_bytes(compress(sarc_encode(text_members, text_aligns)))
+    hashes = {(m, l): msbt_hash(b) for m, lst in tm.items() for l, b in lst}
+    assert all(hashes[k] == v for k, v in TEXT_HASHES.items()), 'TEXT_HASHES are not the fixture messages\' hashes'
 
     r = subprocess.run([str(exe), str(OUT)], env=env, capture_output=True, text=True, timeout=120)
     print(r.stdout, end='')
@@ -485,6 +605,26 @@ def main():
     for n in longs:
         i = int(n.split('/')[1])
         check(g2[n][1] == b'new\0\x01\x02\x03' and g2[n][0] % (0x100 if i % 2 else 8) == 0, 'long names: ' + n)
+
+    # messages replaced
+    tx = sarc_decode(decompress((OUT / 'text.out.zs').read_bytes(), {}))
+    check(set(tx) == {n for n, _ in text_members}, 'text archive: members changed')
+    check(tx['A/one.bgyml'][1] == members[0][1], 'text archive: the BYML member lost its bytes')
+    for n, (off, _) in tx.items():
+        check(off % text_aligns[n] == 0, 'text archive: %s lost its alignment' % n)
+    want = text_expected()
+    for n, wide in (('Msg/Navi.msbt', 0), ('Msg/Wide.msbt', 1)):
+        try:
+            enc, labels, secs = msbt_decode(tx[n][1])
+        except AssertionError as e:
+            check(False, 'text archive: %s: %s' % (n, e))
+            continue
+        check(enc == wide, 'text archive: %s changed its encoding' % n)
+        check(labels == want[n], 'text archive: %s: the messages are not the expected ones: %s' % (
+            n, sorted(l for l in labels if labels[l] != want[n].get(l))))
+        _, _, old_secs = msbt_decode(navi_msbt if n == 'Msg/Navi.msbt' else wide_msbt)
+        for s in old_secs:
+            check(s == 'TXT2' or secs.get(s) == old_secs[s], 'text archive: %s: section %s changed' % (n, s))
 
     fails = [f for f in fails if f]
     for f in fails:

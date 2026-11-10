@@ -1,9 +1,10 @@
 // The edit engine of the restorations (restore.h restore_file): one game file unpacked (a zstd frame, with the
 // dictionary of its id), the members a pack gains added, its BYML parsed (or the BYML members a pack's edits name),
 // the edits applied to the tree, written back, read back to check it holds what was meant, and packed again as the
-// original was. An edit applies only when what it names is there as declared: the object by Hash, Gyaml and Translate
-// (in the file that places it, for a copy from another file), the value it changes at the value the game ships, the
-// key it adds missing, the member it adds missing.
+// original was; a message file (MSBT) member of a text archive gets its messages replaced (msbt.c). An edit applies
+// only when what it names is there as declared: the object by Hash, Gyaml and Translate (in the file that places it,
+// for a copy from another file), the value it changes at the value the game ships, the key it adds missing, the
+// member it adds missing, the message it replaces by the hash of the game's.
 //
 // Each document (the file, or each pack member some edit names) is checked on its own: one that does not read back as
 // edited, or a member that cannot be put back into its pack, loses only its own edits, and the file is served with the
@@ -16,6 +17,7 @@
 #include <zstd.h>
 
 #include "byml.h"
+#include "msbt.h"
 #include "restore.h"
 #include "sarc.h"
 
@@ -439,9 +441,63 @@ static int apply_one(Ctx *c, Byml *b, const RestoreEdit *e, int k) {
     }
     case RESTORE_KIND_ADD_MEMBER:
         break;
+    case RESTORE_KIND_SET_MESSAGE:
+        say(c, k, "skipped: not a message file (MSBT)");
+        return 0;
     }
     say(c, k, "skipped: an edit of this kind needs %s", e->kind == RESTORE_KIND_ADD_MEMBER ? "a pack" : "more fields");
     return 0;
+}
+
+// text with its line breaks written \n, cut to fit out[0..n).
+static const char *one_line(const char *text, char *out, size_t n) {
+    size_t o = 0;
+    for (; *text && o + 3 < n; text++)
+        if (*text == '\n') out[o++] = '\\', out[o++] = 'n';
+        else out[o++] = *text;
+    out[o] = 0;
+    return out;
+}
+
+// The SET_MESSAGE edits idx[0..cnt) of one message file doc[0..n) (a text archive's MSBT member `what`), in their
+// order; the file rewritten (malloc'd) when one applied, else NULL.
+static uint8_t *edit_messages(Ctx *c, const RestoreEdit *const *edits, const int *idx, int cnt, const char *what,
+                              const uint8_t *doc, size_t n, int *ok, size_t *out_n) {
+    uint8_t *cur = NULL;   // the file as the edits so far made it; NULL: doc
+    size_t cur_n = n;
+    char text[256];
+    for (int j = 0; j < cnt; j++) {
+        const RestoreEdit *e = edits[idx[j]];
+        int k = idx[j];
+        if (e->kind != RESTORE_KIND_SET_MESSAGE || !e->path || !e->text_now) {
+            say(c, k, "skipped: %s is a message file, which only SET_MESSAGE edits", what);
+            continue;
+        }
+        uint8_t *next;
+        size_t next_n;
+        uint64_t found;
+        const char *why;
+        unsigned long long want = (unsigned long long)e->text_hash;
+        switch (msbt_set_message(cur ? cur : doc, cur_n, e->path, e->text_hash, e->text_now, &next, &next_n, &found,
+                                 &why)) {
+        case MSBT_SET:
+            free(cur);
+            cur = next, cur_n = next_n, ok[k] = 1;
+            say(c, k, "%s: the message (%016llx) -> \"%s\"", e->path, want, one_line(e->text_now, text, sizeof text));
+            break;
+        case MSBT_ALREADY:
+            say(c, k, "skipped: %s is \"%s\" already", e->path, one_line(e->text_now, text, sizeof text));
+            break;
+        case MSBT_OTHER:
+            say(c, k, "skipped: %s is another message (%016llx, not %016llx)", e->path, (unsigned long long)found, want);
+            break;
+        case MSBT_FAILED:
+            say(c, k, "skipped: %s: %s", e->path, why);
+            break;
+        }
+    }
+    *out_n = cur_n;
+    return cur;
 }
 
 // The edits idx[0..cnt) of one document doc[0..n) (a BYML file, or a pack's BYML member `what`); the document
@@ -549,7 +605,8 @@ void *restore_file(const RestoreEdit *const *edits, int n, const void *in, size_
             done[k] = 1;
             ok[k] = add_member(&c, edits[k], k, &raw, &rn, sizes ? &sizes[k].now : NULL);
         }
-    // One document at a time: the file itself, or each pack member some edit names, in the order the edits name them.
+    // One document at a time: the file itself, or each pack member some edit names, in the order the edits name them;
+    // a message file (MSBT) takes SET_MESSAGE edits, any other document is a BYML.
     for (int k = 0; k < n; k++) {
         if (done[k]) continue;
         const char *m = edits[k]->member;
@@ -562,7 +619,9 @@ void *restore_file(const RestoreEdit *const *edits, int n, const void *in, size_
             continue;
         }
         const char *what = m ? m : "the file";
-        uint8_t *doc = edit_doc(&c, edits, idx, cnt, what, raw + at, len, ok, &doc_n);
+        uint8_t *doc = len >= 8 && !memcmp(raw + at, "MsgStdBn", 8)
+                           ? edit_messages(&c, edits, idx, cnt, what, raw + at, len, ok, &doc_n)
+                           : edit_doc(&c, edits, idx, cnt, what, raw + at, len, ok, &doc_n);
         if (!doc) continue;
         uint8_t *next = doc;
         size_t next_n = doc_n;

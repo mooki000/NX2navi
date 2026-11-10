@@ -1,4 +1,4 @@
-// The restorations (runtime/restore.c, restore_engine.c, byml.c, sarc.c) on the fixtures tests/restore_check.py
+// The restorations (runtime/restore.c, restore_engine.c, byml.c, sarc.c, msbt.c) on the fixtures tests/restore_check.py
 // writes into the folder given: runs edits of every kind on them, checks which apply and which are skipped, writes the
 // results for the script to decode, feeds the parser, the engine and the SARC reader and writer every cut length of
 // those files and damaged copies, checks the parser refuses dicts out of order (and quickly), and runs restore.c's
@@ -14,6 +14,7 @@
 #include "byml.h"
 #include "cfg.h"
 #include "host.h"
+#include "msbt.h"
 #include "platform/platform.h"
 #include "restore.h"
 #include "sarc.h"
@@ -475,6 +476,62 @@ static void pack_more(void) {
     free(in);
 }
 
+#define T "test/text.zs"
+#define NAVI "Msg/Navi.msbt"
+
+// Messages replaced in a text archive's MSBT members; the script checks every message (TEXT_HASHES holds these hashes).
+static void messages(void) {
+    size_t n, out_n;
+    uint8_t *in = load("text.zs", &n);
+    static const RestoreEdit edits[] = {
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_A", 0xa07a3f64afb3b6e0ull,
+                            "{0.3:0000}Dark One{0.3:ffff}\nConquer yourself!"),                    // 0 applies
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_A", 0xa07a3f64afb3b6e0ull,
+                            "{0.3:0000}Dark One{0.3:ffff}\nConquer yourself!"),                    // 1 that already
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_B", 0x1234ull, "x"),                                   // 2 another message
+        RESTORE_SET_MESSAGE(T, NAVI, "Nope", 0xa07a3f64afb3b6e0ull, "x"),                          // 3 no such label
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_C", 0x25f7f232d73044d2ull, "{0.3"),                    // 4 a tag cut short
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_C", 0x25f7f232d73044d2ull,
+                            "自分自身に{1.2:0a0b}打ち勝つ{/1.2}！"),                                // 5 applies
+        RESTORE_SET_MEMBER(T, NAVI, "X", 1, 2),                                                    // 6 not a BYML
+        RESTORE_SET_MESSAGE(T, "A/one.bgyml", "Enemy_A", 0xa07a3f64afb3b6e0ull, "x"),              // 7 not an MSBT
+        RESTORE_SET_MESSAGE(T, "Msg/Wide.msbt", "W0", 0x7ab759bfc5845b1bull,
+                            "Wide {0.3:0000}ж{0.3:ffff} 😀\nline"),                                // 8 applies, UTF-16
+        RESTORE_SET_MESSAGE(T, NAVI, "Plain", 0xe801dbf933a05e5dull, ""),                          // 9 applies, empty
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_B", 0x410786bdd54ba4d3ull, "a } alone"),               // 10 bad markup
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_B", 0x410786bdd54ba4d3ull, "{0.3:00g0}"),              // 11 not hex
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_B", 0x410786bdd54ba4d3ull, "{/0.3:00}"),               // 12 closing, params
+    };
+    static const int want[] = {1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0};
+    _Static_assert(sizeof want / sizeof *want == sizeof edits / sizeof *edits, "one expectation per edit");
+    void *out = run("text archive", edits, (int)(sizeof edits / sizeof *edits), in, n, NULL, 0, want, &out_n);
+    if (out) save("text.out.zs", out, out_n);
+    free(out);
+    // cut and damaged message files are refused, not read past their end
+    size_t raw_n, at, len, got;
+    uint8_t *raw = unzstd(in, n, &raw_n), *res;
+    const char *why;
+    uint64_t found;
+    CHECK(sarc_find(raw, raw_n, NAVI, &at, &len, &why), "text archive: no %s", NAVI);
+    for (size_t cut = 0; cut < len; cut++) {
+        MsbtResult r = msbt_set_message(raw + at, cut, "Enemy_A", 0xa07a3f64afb3b6e0ull, "x", &res, &got, &found, &why);
+        CHECK(r == MSBT_FAILED && !res, "a message file cut at %zu was edited", cut);
+        free(res);
+    }
+    uint8_t *bad = malloc(len);
+    for (size_t i = 0; i < len; i++) {   // one byte changed at a time: refused or edited, never read past
+        memcpy(bad, raw + at, len);
+        bad[i] ^= 0xa5;
+        MsbtResult r = msbt_set_message(bad, len, "Enemy_A", 0xa07a3f64afb3b6e0ull, "x", &res, &got, &found, &why);
+        CHECK((r == MSBT_SET) == (res != NULL), "a message file changed at %zu: an edit without a file, or one", i);
+        free(res);
+    }
+    free(bad);
+    free(raw);
+    free(in);
+}
+
+
 static void others(void) {
     size_t n, out_n, dn;
     static const uint8_t be[16] = {'B', 'Y', 0, 7};
@@ -712,6 +769,7 @@ int main(int argc, char **argv) {
     area_copies();
     pack();
     pack_more();
+    messages();
     others();
     order();
     switches();
