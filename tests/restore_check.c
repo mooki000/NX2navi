@@ -1,9 +1,11 @@
-// The restorations (runtime/restore.c, restore_engine.c, byml.c, sarc.c, msbt.c) on the fixtures tests/restore_check.py
-// writes into the folder given: runs edits of every kind on them, checks which apply and which are skipped, writes the
-// results for the script to decode, feeds the parser, the engine and the SARC reader and writer every cut length of
-// those files and damaged copies, checks the parser refuses dicts out of order (and quickly), and runs restore.c's
-// switches, start and probe with the settings, the log and the RomFS stubbed below.
-// Usage: restore_check <folder>
+// The restorations (runtime/restore.c, restore_engine.c, byml.c, sarc.c, msbt.c, ainb.c) on the fixtures
+// tests/restore_check.py writes into the folder given: runs edits of every kind on them, checks which apply and which
+// are skipped, writes the results for the script to decode, feeds the parsers, the engine and the SARC reader and
+// writer every cut length of those files and damaged copies, checks the parser refuses dicts out of order (and
+// quickly), and runs restore.c's switches, start and probe with the settings, the log and the RomFS stubbed below.
+// Usage: restore_check <folder>; restore_check --graphs reads logic graphs from stdin ({u32 size, bytes} each) and
+// answers each with {u8 written back unchanged, u32 size, the graph with a copy of one of its nodes added (size 0: it
+// has none that can be copied, or it is refused)} for the script to compare.
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +13,7 @@
 #include <time.h>
 #include <zstd.h>
 
+#include "ainb.h"
 #include "byml.h"
 #include "cfg.h"
 #include "host.h"
@@ -758,7 +761,178 @@ static void switches(void) {
     CHECK(serves == 5, "a start after the probe served a file");
 }
 
+#define GP "test/graph.zs"
+#define GM "AI/Test.module.ainb"
+#define GT_FILE "test/tmpl.zs"
+#define GT_MEMBER "AI/Other.module.ainb"
+
+// Runs edits[0..n) expecting none to apply and the file to come back as it was.
+static void refused(const char *what, const RestoreEdit *edits, int n, const void *in, size_t size) {
+    static const int none[32];
+    size_t out_n;
+    void *out = run(what, edits, n, in, size, NULL, 0, none, &out_n);
+    CHECK(!out, "%s: a file came back", what);
+    free(out);
+}
+
+// Logic graph edits on the graph of tests/restore_check.py's graph_fixture (a pack member and a loose file); the
+// script checks every node and section of the results.
+static void graphs(void) {
+    size_t n, out_n, ln;
+    uint8_t *in = load("graph.zs", &n), *loose = load("graph.ainb", &ln);
+    static const RestoreEdit edits[] = {
+        RESTORE_GRAPH_FIND(GP, GM, "eq", "QueryTestEqualS32", "S32Base=5;S32<-bb:Count"),             // 0 node 2
+        RESTORE_GRAPH_FIND(GP, GM, "sel", "BoolSelector", "Input<-@eq.Bool;#1"),                      // 1 node 1
+        RESTORE_GRAPH_FIND(GP, GM, "set", "ExecuteTestSetS32", "BlackboardKey=Count;ExecuteOnce=true"), // 2 node 3
+        RESTORE_GRAPH_FIND(GP, GM, "player", "QueryTestPlayer", "#6"),                                // 3
+        RESTORE_GRAPH_SET(GP, GM, "set", "Mode", "1", "3"),                                           // 4 a property
+        RESTORE_GRAPH_SET(GP, GM, "eq", "S32Base", "5", "9"),                                         // 5 an input
+        RESTORE_GRAPH_ADD(GP, GM, "len", "QueryTestLength", "", NULL, NULL),                          // 6 node 9
+        RESTORE_GRAPH_ADD(GP, GM, "less", "QueryTestLessF32", "F32Base=0.5", NULL, NULL),             // 7 node 10
+        RESTORE_GRAPH_ADD(GP, GM, "far", "QueryTestFar", "Kind=Near", GT_FILE, GT_MEMBER),                            // 8 node 11
+        RESTORE_GRAPH_SET(GP, GM, "less", "F32Base", "0.5", "0.3"),                                   // 9 the new node
+        RESTORE_GRAPH_SET(GP, GM, "set", "BlackboardKey", "Count", "Total"),                          // 10 a new string
+        RESTORE_GRAPH_LINK(GP, GM, "player", "Velocity", "len", "Vector", "=1,2,3"),                  // 11 vec3
+        RESTORE_GRAPH_LINK(GP, GM, "len", "Length", "less", "F32", "=0"),                             // 12
+        RESTORE_GRAPH_LINK(GP, GM, "less", "Bool", "sel", "Input", "@eq.Bool"),                       // 13 replaces one
+        RESTORE_GRAPH_LINK(GP, GM, "far", "Value", "set", "S32", "=0"),                               // 14
+        RESTORE_GRAPH_FIND(GP, GM, "multi", "ExecuteTestMulti", "#7"),                                // 15
+        RESTORE_GRAPH_FIND(GP, GM, "eq2", "QueryTestEqualS32", "S32Base=7"),                          // 16 node 8
+        RESTORE_GRAPH_LINK(GP, GM, "eq2", "Bool", "multi", "BoolMulti", "+#2.Bool,#5.Bool"),          // 17 one more
+        RESTORE_GRAPH_LINK(GP, GM, "eq2", "Bool", "sel", "Input", "+#10.Bool"),                       // 18 now several
+    };
+    static const int all[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    _Static_assert(sizeof all / sizeof *all == sizeof edits / sizeof *edits, "one expectation per edit");
+    void *out = run("graph", edits, (int)(sizeof edits / sizeof *edits), in, n, NULL, 0, all, &out_n);
+    if (out) save("graph.out.zs", out, out_n);
+    free(out);
+    // the file is the graph
+    static const RestoreEdit lo[] = {
+        RESTORE_GRAPH_FIND("test/graph.ainb", NULL, "eq", "QueryTestEqualS32", "S32Base=7"),
+        RESTORE_GRAPH_SET("test/graph.ainb", NULL, "eq", "S32", "1", "-4"),
+    };
+    out = run("loose graph", lo, 2, loose, ln, NULL, 0, all, &out_n);
+    if (out) save("graph.out.ainb", out, out_n);
+    free(out);
+
+    // what is refused: each alone, and nothing of the graph changes
+    static const RestoreEdit unknown[] = {RESTORE_GRAPH_FIND(GP, GM, "x", "QueryTestNope", "")};
+    static const RestoreEdit nomatch[] = {RESTORE_GRAPH_FIND(GP, GM, "x", "QueryTestEqualS32", "S32Base=6")};
+    static const RestoreEdit twice[] = {RESTORE_GRAPH_FIND(GP, GM, "x", "QueryTestEqualS32", "")};
+    static const RestoreEdit badkey[] = {RESTORE_GRAPH_FIND(GP, GM, "x", "QueryTestEqualS32", "Nope=5")};
+    static const RestoreEdit was[] = {RESTORE_GRAPH_FIND(GP, GM, "set", "ExecuteTestSetS32", ""),
+                                      RESTORE_GRAPH_SET(GP, GM, "set", "Mode", "2", "3")};
+    static const RestoreEdit already[] = {RESTORE_GRAPH_FIND(GP, GM, "set", "ExecuteTestSetS32", ""),
+                                          RESTORE_GRAPH_SET(GP, GM, "set", "Mode", "3", "1")};
+    static const RestoreEdit text[] = {RESTORE_GRAPH_FIND(GP, GM, "set", "ExecuteTestSetS32", ""),
+                                       RESTORE_GRAPH_SET(GP, GM, "set", "Mode", "1", "three")};
+    static const RestoreEdit linked[] = {RESTORE_GRAPH_FIND(GP, GM, "sel", "BoolSelector", ""),
+                                         RESTORE_GRAPH_SET(GP, GM, "sel", "Input", "false", "true")};
+    static const RestoreEdit bound[] = {RESTORE_GRAPH_FIND(GP, GM, "eq", "QueryTestEqualS32", "#2"),
+                                        RESTORE_GRAPH_SET(GP, GM, "eq", "S32", "0", "1")};
+    static const RestoreEdit linkwas[] = {RESTORE_GRAPH_FIND(GP, GM, "p", "QueryTestPlayer", ""),
+                                          RESTORE_GRAPH_FIND(GP, GM, "len", "QueryTestLength", ""),
+                                          RESTORE_GRAPH_LINK(GP, GM, "p", "Velocity", "len", "Vector", "=0,0,0")};
+    static const RestoreEdit linktype[] = {RESTORE_GRAPH_FIND(GP, GM, "p", "QueryTestPlayer", ""),
+                                           RESTORE_GRAPH_FIND(GP, GM, "sel", "BoolSelector", ""),
+                                           RESTORE_GRAPH_LINK(GP, GM, "p", "Velocity", "sel", "Input", "#2.Bool")};
+    static const RestoreEdit unnamed[] = {RESTORE_GRAPH_SET(GP, GM, "ghost", "Mode", "1", "3")};
+    static const RestoreEdit children[] = {RESTORE_GRAPH_ADD(GP, GM, "x", "Simultaneous", "", GT_FILE, GT_MEMBER)};
+    static const RestoreEdit theirbb[] = {RESTORE_GRAPH_ADD(GP, GM, "x", "QueryTestEqualS32", "", GT_FILE, GT_MEMBER)};
+    static const RestoreEdit tmplnope[] = {RESTORE_GRAPH_ADD(GP, GM, "x", "QueryTestNope", "", GT_FILE, GT_MEMBER)};
+    static const RestoreEdit nofile[] = {RESTORE_GRAPH_ADD(GP, GM, "x", "QueryTestFar", "", "test/none.zs", GM)};
+    static const RestoreEdit notgraph[] = {RESTORE_GRAPH_FIND(GP, "A/one.bgyml", "x", "QueryTestFar", "")};
+    static const RestoreEdit notbyml[] = {RESTORE_SET_MEMBER(GP, GM, "MoveSpeed", 0.15, 1)};
+    static const RestoreEdit plus[] = {RESTORE_GRAPH_FIND(GP, GM, "multi", "ExecuteTestMulti", ""),
+                                       RESTORE_GRAPH_FIND(GP, GM, "eq2", "QueryTestEqualS32", "S32Base=7"),
+                                       RESTORE_GRAPH_LINK(GP, GM, "eq2", "Bool", "multi", "BoolMulti", "+#2.Bool")};
+    static const RestoreEdit half[] = {RESTORE_GRAPH_FIND(GP, GM, "set", "ExecuteTestSetS32", ""),
+                                       RESTORE_GRAPH_SET(GP, GM, "set", "Mode", "1", "3"),
+                                       RESTORE_GRAPH_FIND(GP, GM, "x", "QueryTestNope", "")};
+#define REFUSED(what, e) refused(what, e, (int)(sizeof e / sizeof *e), in, n)
+    REFUSED("graph: a type it lacks", unknown);
+    REFUSED("graph: no node matches", nomatch);
+    REFUSED("graph: two nodes match", twice);
+    REFUSED("graph: a parameter the node lacks", badkey);
+    REFUSED("graph: another value", was);
+    REFUSED("graph: the value already", already);
+    REFUSED("graph: not a number", text);
+    REFUSED("graph: a connected input", linked);
+    REFUSED("graph: a bound input", bound);
+    REFUSED("graph: another connection", linkwas);
+    REFUSED("graph: an output of another type", linktype);
+    REFUSED("graph: a name no edit gave", unnamed);
+    REFUSED("graph: a node with children", children);
+    REFUSED("graph: another graph's blackboard", theirbb);
+    REFUSED("graph: a type the other graph lacks", tmplnope);
+    REFUSED("graph: no file to copy from", nofile);
+    REFUSED("graph: a BYML member", notgraph);
+    REFUSED("graph: a BYML edit", notbyml);
+    REFUSED("graph: one of three skipped", half);
+    REFUSED("graph: another list of outputs", plus);
+    refused("graph: cut in half", lo, 2, loose, ln / 2);
+    // cut and damaged graphs are refused or read, never read past their end; what is read writes back
+    for (size_t cut = 0; cut < ln; cut += 5) {
+        const char *why;
+        Ainb *g = ainb_read(loose, cut, &why);
+        CHECK(!g, "a graph cut at %zu was read", cut);
+        ainb_free(g);
+    }
+    uint8_t *bad = malloc(ln);
+    for (size_t i = 0; i < ln; i++) {
+        memcpy(bad, loose, ln);
+        bad[i] ^= (uint8_t)(0x5a + i);
+        const char *why;
+        Ainb *g = ainb_read(bad, ln, &why);
+        if (g) {
+            size_t wn;
+            uint8_t *w = ainb_write(g, &wn);
+            char note[256];
+            for (int k = 0; k < ainb_nodes(g); k++) ainb_find(g, ainb_type(g, k), "S32Base=5", note, sizeof note);
+            free(w);
+        }
+        ainb_free(g);
+    }
+    free(bad);
+    free(loose);
+    free(in);
+}
+
+static uint32_t rd32le(const uint8_t *p) { return (uint32_t)p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
+
+// --graphs: the game's graphs, one at a time from stdin, each written back unchanged and with a node added.
+static int graphs_stdin(void) {
+    uint8_t head[4];
+    while (fread(head, 1, 4, stdin) == 4) {
+        size_t n = rd32le(head);
+        uint8_t *p = malloc(n ? n : 1);
+        if (!p || fread(p, 1, n, stdin) != n) return 1;
+        const char *why;
+        Ainb *g = ainb_read(p, n, &why);
+        uint8_t same = 0, *grown = NULL;
+        size_t wn = 0, gn = 0;
+        if (g) {
+            uint8_t *w = ainb_write(g, &wn);
+            same = w && wn == n && !memcmp(w, p, n);
+            free(w);
+            char note[512];
+            for (int i = 0; i < ainb_nodes(g) && !grown; i++)
+                if (ainb_add(g, g, i, note, sizeof note) >= 0) grown = ainb_write(g, &gn);
+        } else
+            fprintf(stderr, "refused: %s\n", why);
+        ainb_free(g);
+        uint8_t out[5] = {same, (uint8_t)gn, (uint8_t)(gn >> 8), (uint8_t)(gn >> 16), (uint8_t)(gn >> 24)};
+        fwrite(out, 1, 5, stdout);
+        if (gn) fwrite(grown, 1, gn, stdout);
+        fflush(stdout);
+        free(grown);
+        free(p);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--graphs")) return graphs_stdin();
     if (argc != 2) {
         fprintf(stderr, "usage: restore_check <folder of tests/restore_check.py's fixtures>\n");
         return 2;
@@ -773,6 +947,7 @@ int main(int argc, char **argv) {
     others();
     order();
     switches();
+    graphs();
     printf("restore_check.c: %s (%d failures)\n", fails ? "FAILED" : "passed", fails);
     return fails ? 1 : 0;
 }

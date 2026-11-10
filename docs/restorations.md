@@ -26,7 +26,8 @@ game would read it (a mod's version, else the original), unpacks it (zstd, with 
 `Pack/ZsDic.pack.zs`), adds the pack members it gains (`runtime/sarc.c`), parses the BYML (`runtime/byml.c`), or each
 BYML member of a pack the edits name, applies the edits, writes the BYML back, reads it back to check it holds what was
 meant, and packs it as the original was; a message file (MSBT, `runtime/msbt.c`) member of a text archive gets its
-messages replaced instead. A copy from another file reads that file the same way. `romfs.c` serves the
+messages replaced instead, and a logic graph (AINB, `runtime/ainb.c`; a loose `Logic/` graph or an `AI/` member of a
+pack) its structure changed. A copy from another file reads that file the same way. `romfs.c` serves the
 result from `<profile>/restore/<folder>/` and raises the file's entry in the resource size table when it grew, gives an
 added member an entry of its own when the table has none for its path, and raises the entry of a pack member the edits
 made larger: the game sizes the member's buffer from it (without, a Heart Piece whose ActorParam grew by one text
@@ -98,6 +99,12 @@ static const RestoreEdit edits[] = {
     // replace a message of a text archive's MSBT: its label, the msbt_hash of the game's message, ours
     RESTORE_SET_MESSAGE("Mals/USen.Product.110.sarc.zs", "EventFlowMsg/NaviHint_Enemy.msbt", "Enemy_X",
                         0x0123456789abcdefull, "Name\nHint"),
+    // a logic graph: name the node of a type whose values match, add a copy of a node, set a value, connect
+    RESTORE_GRAPH_FIND("Pack/Actor/Obj_W.pack.zs", "AI/Obj_W.module.ainb", "sel", "BoolSelector", "Input<-#13.Bool"),
+    RESTORE_GRAPH_ADD("Pack/Actor/Obj_W.pack.zs", "AI/Obj_W.module.ainb", "less", "QueryMathLessOrEqualF32", "#131",
+                      NULL, NULL),
+    RESTORE_GRAPH_SET("Pack/Actor/Obj_W.pack.zs", "AI/Obj_W.module.ainb", "less", "F32Base", "0", "0.3"),
+    RESTORE_GRAPH_LINK("Pack/Actor/Obj_W.pack.zs", "AI/Obj_W.module.ainb", "less", "Bool", "sel", "Input", "#13.Bool"),
 };
 
 RESTORATION(name, "KEY", "Menu label", "One-line description for the menu.", edits);
@@ -119,7 +126,18 @@ RESTORATION(name, "KEY", "Menu label", "One-line description for the menu.", edi
   (the window, Navi's voice) and the rest becomes the declared text, UTF-8 with a control tag written
   `{group.type:hex parameters}` and a closing one `{/group.type}`; the file's encoding (UTF-8 or UTF-16) is kept. The
   probe prints the hash it found when it skips an edit for another message.
+- A logic graph (`RESTORE_GRAPH_*`, `runtime/ainb.h`) is changed through names its edits give nodes: `FIND` names the
+  one node of a type whose values match (`"InstanceName=Enemy_X;Input<-#13.Bool;#8"`: a value it holds, an input
+  connected to an output, its index; no node or two is a skip), `ADD` names a new node, a copy of one of this graph or
+  of another (its values; its inputs keep their values and lose their connections; a node with children, a module
+  call, an expression or attachments is not copied), `SET` changes a property or an input that holds a value of its
+  own from the game's value to ours, `LINK` connects an output of one named node to an input of another and names
+  what the input held (`"#13.Bool"`, `"@name.Out"`, `"bb:Name"`, `"=value"`; `"+#13.Bool"` adds the output to those a
+  multi-input such as `OperateAND`'s `BoolMulti` reads). The graph's edits apply all or none:
+  half a change to a behaviour is worse than none. New nodes, entries and strings go at the ends of their arrays; the
+  rest of the file keeps its bytes. `python tests/restore_check.py --game <game copy>` reads every graph of the
+  player's files and writes it back (unchanged, and with a node added) to check the reader and writer.
 - Run `--probe-restore` on a game build: every edit of the new restoration should say what it did.
 
-Not yet possible: removing a key or a pack member, adding dicts or array items, editing logic graphs (`.ainb`) or
-binary files (models, textures, collision).
+Not yet possible: removing a key or a pack member, adding dicts or array items, removing graph nodes or changing a
+node's children, adding blackboard entries, editing binary files (models, textures, collision).

@@ -2,10 +2,11 @@
 // switch of its own, NX2NAVI_RESTORE_<KEY> = 1 (nx2navi.ini [restorations], the Restorations tab of the menu). One is a
 // list of edits to the player's own game files: remove a placed object, add a copy of one (placed in the same file or
 // in another), set a number, bool or text in a placement or in a BYML member of an actor pack (also under a key that is
-// not there yet), add a member to a pack, replace a message of a text archive. Once at start, romfs.c applies the edits
-// of the switched-on restorations to each file as the game would read it (a mod's version, else the original) and
-// serves the result from <profile>/restore/; an edit that does not find what it names is skipped and logged, never
-// applied elsewhere.
+// not there yet), add a member to a pack, replace a message of a text archive, change a logic graph (find a node, set
+// its values, add a copy of a node, connect an output to an input). Once at start, romfs.c applies the edits of the
+// switched-on restorations to each file as the game would read it (a mod's version, else the original) and serves the
+// result from <profile>/restore/; an edit that does not find what it names is skipped and logged, never applied
+// elsewhere.
 //
 // A restoration is declared in a file of its own, runtime/restore_<name>.c:
 //
@@ -21,8 +22,11 @@
 
 typedef enum {
     RESTORE_KIND_SET = 1, RESTORE_KIND_REMOVE, RESTORE_KIND_ADD, RESTORE_KIND_SET_TEXT, RESTORE_KIND_ADD_MEMBER,
-    RESTORE_KIND_SET_MESSAGE,
+    RESTORE_KIND_SET_MESSAGE, RESTORE_KIND_GRAPH,
 } RestoreKind;
+
+// What a GRAPH edit does (RestoreEdit.graph_op).
+enum { RESTORE_GRAPH_OP_FIND = 1, RESTORE_GRAPH_OP_SET, RESTORE_GRAPH_OP_ADD, RESTORE_GRAPH_OP_LINK };
 
 typedef struct {
     RestoreKind kind;
@@ -58,6 +62,14 @@ typedef struct {
     // FNV-1a, 64 bits) is text_hash, becomes text_now: its leading control tags (window, voice) stay, the rest is
     // replaced (UTF-8; a control tag written {group.type:hex parameters}, a closing one {/group.type}).
     uint64_t text_hash;
+    // GRAPH: a change to a logic graph (an AINB file or pack member, ainb.h). The nodes it changes have names that the
+    // graph's edits before it gave them: FIND names `node` the one node of type node_type whose values match `match`
+    // (ainb_find's grammar); ADD names `node` a new node, a copy of the one node of type node_type matching `match` in
+    // the graph `from` / from_member (from NULL: this graph); SET sets `param` of `node` from text_was to text_now;
+    // LINK connects output src_out of node `src` to input `param` of `node`, which held text_was ("@name.Output",
+    // "#3.Output", "bb:Name" or "=value").
+    uint8_t graph_op;
+    const char *node, *node_type, *match, *param, *src, *src_out;
 } RestoreEdit;
 
 typedef struct {
@@ -111,6 +123,26 @@ typedef struct {
 #define RESTORE_SET_MESSAGE(file_, member_, label, hash, text)                                                     \
     {.kind = RESTORE_KIND_SET_MESSAGE, .file = file_, .member = member_, .path = label, .text_hash = hash,       \
      .text_now = text}
+// Logic graph edits (RESTORE_KIND_GRAPH) on the graph `member` of the pack `file` (member NULL: the file is the graph).
+// They apply in their order and all or none: when one is skipped, the graph keeps its bytes. Names are written
+// without the '@' that refers to them.
+// Name `name` the one node of type `type` whose values match `match` ("InstanceName=Enemy_X;Input<-#13.Bool").
+#define RESTORE_GRAPH_FIND(file_, member_, name, type, match_)                                                     \
+    {.kind = RESTORE_KIND_GRAPH, .graph_op = RESTORE_GRAPH_OP_FIND, .file = file_, .member = member_, .node = name, \
+     .node_type = type, .match = match_}
+// Set property or input `param` of the node named `name` from was to now (text: "0.3", "true", "Name", "x,y,z").
+#define RESTORE_GRAPH_SET(file_, member_, name, param_, was, now)                                                  \
+    {.kind = RESTORE_KIND_GRAPH, .graph_op = RESTORE_GRAPH_OP_SET, .file = file_, .member = member_, .node = name,  \
+     .param = param_, .text_was = was, .text_now = now}
+// Add a node named `name`: a copy of the one node of type `type` matching `match` in the graph src_member of the
+// file src (src NULL: this graph; src_member NULL: src is a graph), unconnected.
+#define RESTORE_GRAPH_ADD(file_, member_, name, type, match_, src, src_member)                                     \
+    {.kind = RESTORE_KIND_GRAPH, .graph_op = RESTORE_GRAPH_OP_ADD, .file = file_, .member = member_, .node = name,  \
+     .node_type = type, .match = match_, .from = src, .from_member = src_member}
+// Connect output `out` of the node named `from_` to input `in` of the node named `to`, which held was.
+#define RESTORE_GRAPH_LINK(file_, member_, from_, out, to, in, was)                                                \
+    {.kind = RESTORE_KIND_GRAPH, .graph_op = RESTORE_GRAPH_OP_LINK, .file = file_, .member = member_, .node = to,   \
+     .param = in, .src = from_, .src_out = out, .text_was = was}
 
 // The registry: every RESTORATION of the linked objects meets in one section (as host.h's HOST_OVERRIDE entries do),
 // which restore.c walks: on PE/COFF ".rst$m", sorted between restore.c's ".rst$a" and ".rst$z" markers; on ELF

@@ -2,12 +2,13 @@
 
 Linux: python tests/restore_check.py (clang or cc, and zstd's development files)
 Windows: python tests/restore_check.py --toolchain C:/msys64/ucrt64
+With --game <built game copy>: also every logic graph of the player's files, read and written back (ainb.c).
 
 Writes fixtures with an encoder of its own (BYML laid out parents first and nothing shared, unlike the engine's
 writer): a placement file packed with a zstd dictionary (Pack/ZsDic.pack.zs's role is played by a SARC of two
 trained dictionaries), a pack (SARC) of BYML members and raw bytes, the files edits copy from (another placement,
 another pack) or check against (an area's other placement file, its static compound), a text archive of message
-files, and files that are not what
+files, logic graphs (AINB), and files that are not what
 they claim. tests/restore_check.c runs the engine's edits of every kind on them, prints each note and checks which
 applied, feeds the parser, the engine and the SARC reader and writer every cut length of them and damaged copies,
 checks that dicts out of order are refused, and runs restore.c's switches, a start and the probe with the settings,
@@ -39,6 +40,10 @@ try:
     def train(samples, size):
         d = _zstd.train_dict(samples, size)
         return d, d.dict_id, d.dict_content
+
+    def load_dict(content):
+        d = _zstd.ZstdDict(content)
+        return d.dict_id, d
 except ImportError:
     import zstandard
 
@@ -53,6 +58,10 @@ except ImportError:
     def train(samples, size):
         d = zstandard.train_dictionary(size, samples)
         return d, d.dict_id(), d.as_bytes()
+
+    def load_dict(content):
+        d = zstandard.ZstdCompressionDict(content)
+        return d.dict_id(), d
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'build' / 'restore-check'
@@ -482,11 +491,397 @@ TEXT_HASHES = {('Msg/Navi.msbt', 'Enemy_A'): 0xa07a3f64afb3b6e0, ('Msg/Navi.msbt
                ('Msg/Navi.msbt', 'Enemy_C'): 0x25f7f232d73044d2, ('Msg/Navi.msbt', 'Plain'): 0xe801dbf933a05e5d,
                ('Msg/Wide.msbt', 'W0'): 0x7ab759bfc5845b1b}
 
+# ---- AINB logic graphs: a node is a dict: type (0 application-defined, else the built-in code), name, flags (bit 0
+# query), props [(k, name, flags, value)], ins [(k, name, source, flags, value)] with source None (a value of its
+# own), (node, output index) or ('multi', [(node, output index)]), outs [(k, name, used)], plugs {category:
+# [(node, name, extra bytes)]}, query [ranks]. Types k: int, bool, float, string, vec3, pointer (a pointer's value is
+# (class name, u32)).
+AINB_PSZ, AINB_ISZ, AINB_OSZ = [12, 12, 12, 12, 20, 12], [16, 16, 16, 16, 24, 20], [4, 4, 4, 4, 4, 8]
+OWN, DEFAULT, BOUND = 0x00800000, 0x01000000, 0x80000000
+
+
+def ainb_encode(g):
+    """A graph laid out as the game's are (ainb.c's header comment). g: name, cmds [(name, node)], nodes, bb
+    [(slot, name, value bytes)], att [(name, param bytes of 0x34)], exb, mod, action, link, repl, x6c (bytes of those
+    sections)."""
+    pool = bytearray()
+    where = {}
+
+    def s(text):
+        if text not in where:
+            where[text] = len(pool)
+            pool.extend(text.encode() + b'\0')
+        return where[text]
+
+    def val(k, v):
+        if k == 0: return struct.pack('<i', v)
+        if k == 1: return struct.pack('<I', int(v))
+        if k == 2: return struct.pack('<f', v)
+        if k == 3: return struct.pack('<I', s(v))
+        if k == 4: return struct.pack('<3f', *v)
+
+    bb = bytearray()
+    entries, values, first = bytearray(), bytearray(), 0
+    for slot in range(7):   # string, int, u32, float, bool, vec3, pointer
+        mine = [x for x in g.get('bb', []) if x[0] == slot]
+        bb += struct.pack('<HHHH', len(mine), first, len(values), 0)
+        for _, name, v in mine:
+            entries += struct.pack('<II', s(name) | 0x800000, 0)
+            values += v
+        first += len(mine)
+    bb += entries + values
+    nodes = g['nodes']
+    props, ins, outs = [[] for _ in range(6)], [[] for _ in range(6)], [[] for _ in range(6)]
+    multi, query = [], []
+    blocks = []
+    for n in nodes:
+        head = bytearray()
+        for k in range(6):
+            mine = [p for p in n.get('props', []) if p[0] == k]
+            head += struct.pack('<II', len(props[k]), len(mine))
+            for _, name, fl, v in mine:
+                props[k].append(struct.pack('<III', s(name), s(v[0]), fl) if k == 5 else
+                                struct.pack('<II', s(name), fl) + val(k, v))
+        for k in range(6):
+            mine_in = [p for p in n.get('ins', []) if p[0] == k]
+            mine_out = [p for p in n.get('outs', []) if p[0] == k]
+            head += struct.pack('<IIII', len(ins[k]), len(mine_in), len(outs[k]), len(mine_out))
+            for _, name, src, fl, v in mine_in:
+                if src is None: link = (-1, 0)
+                elif src[0] == 'multi':
+                    link = (-100 - len(multi), len(src[1]))
+                    multi.extend(struct.pack('<HHI', a, b, 0) for a, b in src[1])
+                else: link = src
+                if k == 5: ins[k].append(struct.pack('<IIhhII', s(name), s(v[0]), link[0], link[1], fl, v[1]))
+                else: ins[k].append(struct.pack('<IhhI', s(name), link[0], link[1], fl) + val(k, v))
+            for _, name, used in mine_out:
+                o = struct.pack('<I', s(name) | (0x80000000 if used else 0))
+                outs[k].append(o + (struct.pack('<I', s('game::Data')) if k == 5 else b''))
+        plugs = n.get('plugs', {})
+        total = sum(len(v) for v in plugs.values())
+        acc = 0
+        for c in range(10):
+            head += struct.pack('<BB', len(plugs.get(c, [])), acc)
+            acc += len(plugs.get(c, []))
+        blocks.append((head, [(c, p) for c in range(10) for p in plugs.get(c, [])], total))
+        n['_query_base'] = len(query)
+        query.extend(n.get('query', []))
+    # layout
+    out = bytearray(0x74)
+    cmd_at = 0x74
+    elems_at = cmd_at + 0x18 * len(g['cmds'])
+    bb_at = elems_at + 0x3c * len(nodes)
+    at = bb_at + len(bb)
+    param_at = []
+    body = bytearray()
+    for head, plugs, total in blocks:
+        param_at.append(at + len(body))
+        here = at + len(body)
+        data = bytearray()
+        ptrs = bytearray()
+        for c, (node, name, extra) in plugs:
+            ptrs += struct.pack('<I', here + 0xa4 + 4 * total + len(data))
+            data += struct.pack('<II', node, s(name)) + extra
+        body += head + ptrs + data
+    at += len(body)
+    att = g.get('att', [])
+    attid_at = att_at = at
+    at += 0x10 * len(att)
+    attp_at = []
+    for _ in att:
+        attp_at.append(at)
+        at += 0x64
+    prop_at = at
+    prop_body = bytearray()
+    starts = []
+    for k in range(6):
+        starts.append(prop_at + 0x18 + len(prop_body))
+        prop_body += b''.join(props[k])
+    io_at = prop_at + 0x18 + len(prop_body)
+    io_body = bytearray()
+    io_starts = []
+    for k in range(6):
+        io_starts.append(io_at + 0x30 + len(io_body))
+        io_body += b''.join(ins[k])
+        io_starts.append(io_at + 0x30 + len(io_body))
+        io_body += b''.join(outs[k])
+    multi_at = io_at + 0x30 + len(io_body)
+    jump_at = multi_at + 8 * len(multi)
+    query_at = jump_at
+    exb_at = query_at + 4 * len(query)
+    mod_at = exb_at + len(g.get('exb', b''))
+    action_at = mod_at + len(g['mod'])
+    link_at = action_at + len(g['action'])
+    repl_at = link_at + len(g['link'])
+    x6c_at = repl_at + len(g['repl'])
+    enum_at = x6c_at + len(g['x6c'])
+    str_at = enum_at + 4
+    s(g['name'])
+    for name, _ in g['cmds']: s(name)
+    for n in nodes: s(n.get('name', ''))
+    for name, _ in att: s(name)
+    # header
+    struct.pack_into('<4sIIIIIII', out, 0, b'AIB ', 0x408, s(g['name']), len(g['cmds']), len(nodes),
+                     sum(n.get('flags', 0) & 1 for n in nodes), len(att), 0)
+    struct.pack_into('<17I', out, 0x20, bb_at, str_at, enum_at, prop_at, jump_at, io_at, multi_at, att_at, attid_at,
+                     exb_at if g.get('exb') else 0, repl_at, query_at, jump_at, 0, 0, mod_at, s('AI'))
+    struct.pack_into('<IIII', out, 0x64, 0, action_at, x6c_at, link_at)
+    for name, node in g['cmds']:
+        out += struct.pack('<I', s(name)) + bytes(range(16)) + struct.pack('<HH', node, 0)
+    for i, n in enumerate(nodes):
+        name = n.get('name', '')
+        out += struct.pack('<HHHBBIIII', n['type'], i, 0, n.get('flags', 0), 0, s(name),
+                           murmur3(name.encode()) if n['type'] == 0 else 0, 0, param_at[i])
+        out += struct.pack('<HHHHIHHI', 0, 0, sum(len(src[1]) for _, _, src, _, _ in n.get('ins', [])
+                                                 if src and src[0] == 'multi'), 0, 0, n['_query_base'],
+                           len(n.get('query', [])), 0)
+        out += bytes((i * 7 + j) & 0xff for j in range(16))
+    out += bb + body
+    for (name, param), pa in zip(att, attp_at):
+        out += struct.pack('<IIII', s(name), pa, 0, murmur3(name.encode()))
+    for (name, param), pa in zip(att, attp_at):
+        out += param + b''.join(struct.pack('<II', 0, pa + 0x64) for _ in range(6))
+    out += b''.join(struct.pack('<I', x) for x in starts) + prop_body
+    out += b''.join(struct.pack('<I', x) for x in io_starts) + io_body
+    out += b''.join(multi) + b''.join(struct.pack('<HH', q, 0) for q in query)
+    out += g.get('exb', b'') + g['mod'] + g['action'] + g['link'] + g['repl'] + g['x6c'] + b'\0' * 4 + pool
+    assert len(out) == str_at + len(pool)
+    return bytes(out)
+
+
+def murmur3(data):
+    c1, c2, h, n = 0xcc9e2d51, 0x1b873593, 0, len(data)
+    rot = lambda x, r: ((x << r) | (x >> (32 - r))) & 0xffffffff
+    for i in range(0, n - n % 4, 4):
+        k = rot(struct.unpack_from('<I', data, i)[0] * c1 & 0xffffffff, 15) * c2 & 0xffffffff
+        h = (rot(h ^ k, 13) * 5 + 0xe6546b64) & 0xffffffff
+    k = int.from_bytes(data[n - n % 4:], 'little')
+    if n % 4: h ^= rot(k * c1 & 0xffffffff, 15) * c2 & 0xffffffff
+    h ^= n
+    for sh, m in ((16, 0x85ebca6b), (13, 0xc2b2ae35), (16, 1)):
+        h ^= h >> sh
+        h = h * m & 0xffffffff
+    return h
+
+
+def ainb_decode(d):
+    """{name, nodes (as ainb_encode takes them, plus guid; plugs as (node, name)), sections: {name: bytes} of the
+    sections moved as they are}; checks the layout as ainb.c reads it."""
+    u = lambda o: struct.unpack_from('<I', d, o)[0]
+    assert d[:4] == b'AIB ' and u(4) == 0x408
+    sp = u(0x24)
+    st = lambda o: d[sp + o:d.index(b'\0', sp + o)].decode()
+    ncmd, nel, nq, natt = u(0xc), u(0x10), u(0x14), u(0x18)
+    elems_at = 0x74 + 0x18 * ncmd
+    assert u(0x20) == elems_at + 0x3c * nel and u(0x50) == u(0x30)
+    pt, io = u(0x2c), u(0x34)
+    pa = [u(pt + 4 * k) for k in range(6)] + [io]
+    ia = [u(io + 4 * k) for k in range(12)] + [u(0x38)]
+    assert pa[0] == pt + 0x18 and ia[0] == io + 0x30
+
+    def val(k, o):
+        if k == 0: return struct.unpack_from('<i', d, o)[0]
+        if k == 1: return bool(u(o))
+        if k == 2: return round(struct.unpack_from('<f', d, o)[0], 5)
+        if k == 3: return st(u(o))
+        if k == 4: return tuple(round(x, 5) for x in struct.unpack_from('<3f', d, o))
+
+    nodes = []
+    for i in range(nel):
+        e = elems_at + 0x3c * i
+        t, idx, natt_e, fl = struct.unpack_from('<HHHB', d, e)
+        assert idx == i
+        p = u(e + 0x14)
+        n = dict(type=t, name=st(u(e + 8)), flags=fl, guid=d[e + 0x2c:e + 0x3c], props=[], ins=[], outs=[], plugs={})
+        assert u(e + 0xc) == (murmur3(n['name'].encode()) if t == 0 else 0)
+        for k in range(6):
+            b, c = struct.unpack_from('<II', d, p + 8 * k)
+            for j in range(c):
+                o = pa[k] + (b + j) * AINB_PSZ[k]
+                n['props'].append((k, st(u(o)), u(o + 8), (st(u(o + 4)),)) if k == 5 else
+                                  (k, st(u(o)), u(o + 4), val(k, o + 8)))
+        for k in range(6):
+            ib, ic, ob, oc = struct.unpack_from('<IIII', d, p + 0x30 + 16 * k)
+            for j in range(ic):
+                o = ia[2 * k] + (ib + j) * AINB_ISZ[k]
+                so = 8 if k == 5 else 4
+                a, b = struct.unpack_from('<hh', d, o + so)
+                src = None if a < 0 and a > -100 else (a, b) if a >= 0 else \
+                    ('multi', [struct.unpack_from('<HH', d, u(0x38) + 8 * (-100 - a + q)) for q in range(b)])
+                v = (st(u(o + 4)), u(o + 16)) if k == 5 else val(k, o + 12)
+                n['ins'].append((k, st(u(o)), src, u(o + so + 4), v))
+            for j in range(oc):
+                o = ia[2 * k + 1] + (ob + j) * AINB_OSZ[k]
+                n['outs'].append((k, st(u(o) & 0x7fffffff), bool(u(o) >> 31)))
+        raw = d[p + 0x90:p + 0xa4]
+        for c in range(10):
+            cnt, base = raw[2 * c], raw[2 * c + 1]
+            if cnt:
+                n['plugs'][c] = [(u(q), st(u(q + 4))) for q in (u(p + 0xa4 + 4 * (base + j)) for j in range(cnt))]
+        assert struct.unpack_from('<H', d, e + 0x1c)[0] == sum(len(src[1]) for _, _, src, _, _ in n['ins']
+                                                              if src and src[0] == 'multi'), 'multi-input count'
+        qb, qc = struct.unpack_from('<HH', d, e + 0x24)
+        n['query'] = [struct.unpack_from('<H', d, u(0x4c) + 4 * (qb + j))[0] for j in range(qc)]
+        nodes.append(n)
+    assert sum(n['flags'] & 1 for n in nodes) == nq
+    secs = {}
+    order = [(0x38, 'multi'), (0x30, 'jump'), (0x4c, 'query'), (0x44, 'exb'), (0x5c, 'mod'), (0x68, 'action'),
+             (0x70, 'link'), (0x48, 'repl'), (0x6c, 'x6c'), (0x28, 'enum'), (0x24, 'str')]
+    present = [(u(f), n) for f, n in order if u(f)]
+    for (a, n), (b, _) in zip(present, present[1:]):
+        if n not in ('query',): secs[n] = d[a:b]
+    first_param = u(elems_at + 0x14) if nel else min(u(0x3c), u(0x40))
+    secs['bb'] = d[u(0x20):first_param]
+    secs['att'] = [(st(u(u(0x3c) + 0x10 * j)), d[u(u(0x3c) + 0x10 * j + 4):u(u(0x3c) + 0x10 * j + 4) + 0x34])
+                   for j in range(natt)]
+    for j in range(natt):
+        ap = u(u(0x3c) + 0x10 * j + 4)
+        assert all(u(ap + 0x34 + 8 * k + 4) == ap + 0x64 for k in range(6)), 'attachment end offsets'
+    return dict(name=st(u(8)), cmds=[(st(u(0x74 + 0x18 * i)), struct.unpack_from('<H', d, 0x74 + 0x18 * i + 0x14)[0])
+                                     for i in range(ncmd)], nodes=nodes, sections=secs)
+
+
+def graph_fixture():
+    """The graph tests/restore_check.c edits (AI/Test.module.ainb), and the one it copies a node from."""
+    g = dict(name='Test.module', cmds=[('Root', 0)], bb=[(1, 'Count', struct.pack('<i', 0)),
+                                                       (3, 'Wait', struct.pack('<f', 2.5))], nodes=[
+        dict(type=3, name='', plugs={2: [(1, '', b''), (3, '', b'')]}),
+        dict(type=7, name='', props=[(0, 'CalculateTiming', 0, 0)], ins=[(1, 'Input', (2, 0), 0, False)],
+             plugs={0: [(2, 'Input', b'\0' * 8)], 2: [(3, 'True', b''), (4, 'False', b'')]}, query=[0]),
+        dict(type=0, name='QueryTestEqualS32', flags=1, ins=[(0, 'S32', None, BOUND | 0, 0), (0, 'S32Base', None, OWN, 5)],
+             outs=[(1, 'Bool', True)]),
+        dict(type=0, name='ExecuteTestSetS32', props=[(0, 'Mode', 0, 1), (1, 'ExecuteOnce', 0, True),
+                                                      (3, 'BlackboardKey', 0, 'Count')],
+             ins=[(0, 'S32', None, OWN | DEFAULT, 0)]),
+        dict(type=0, name='QueryTestLength', flags=1, ins=[(4, 'Vector', None, OWN, (1.0, 2.0, 3.0))],
+             outs=[(2, 'Length', False)]),
+        dict(type=0, name='QueryTestLessF32', flags=1, ins=[(2, 'F32', None, OWN | DEFAULT, 0.0),
+                                                           (2, 'F32Base', None, OWN, 0.5)], outs=[(1, 'Bool', False)]),
+        dict(type=0, name='QueryTestPlayer', flags=1, outs=[(4, 'Velocity', False), (5, 'Data', False)]),
+        dict(type=0, name='ExecuteTestMulti', ins=[(1, 'BoolMulti', ('multi', [(2, 0), (5, 0)]), 0, False),
+                                                   (5, 'Target', None, OWN, ('game::Data', 0))], query=[0, 2]),
+        dict(type=0, name='QueryTestEqualS32', flags=1, ins=[(0, 'S32', None, OWN, 1), (0, 'S32Base', None, OWN, 7)],
+             outs=[(1, 'Bool', False)]),
+    ], att=[('TestAttachment', b'\0' * 0x34)], exb=b'EXB ' + bytes(range(40)), mod=struct.pack('<IIII', 1, 0, 0, 1),
+        action=struct.pack('<I', 0), link=struct.pack('<II', 0x1234, 0x5678), repl=bytes.fromhex('00000000ffffffff'),
+        x6c=b'\0' * 4)
+    tmpl = dict(name='Other.module', cmds=[], nodes=[
+        dict(type=0, name='QueryTestFar', flags=1, props=[(2, 'Distance', 0, 4.0), (3, 'Kind', 0, 'Near')],
+             ins=[(1, 'Enabled', (1, 0), 0, True)], outs=[(0, 'Value', False)]),
+        dict(type=0, name='QueryTestEqualS32', flags=1, ins=[(0, 'S32', None, BOUND | 0, 0)], outs=[(1, 'Bool', True)]),
+        dict(type=3, name='', plugs={2: [(0, '', b'')]}),
+    ], mod=struct.pack('<I', 0), action=struct.pack('<I', 0), link=b'\0' * 8, repl=bytes.fromhex('00000000ffffffff'),
+        x6c=b'\0' * 4)
+    return g, tmpl
+
+
+def graph_expected(g):
+    """What tests/restore_check.c's edits make of graph_fixture()'s graph, decoded as ainb_decode does."""
+    import copy
+    n = copy.deepcopy(ainb_decode(ainb_encode(g))['nodes'])
+    n[3]['props'][0] = (0, 'Mode', 0, 3)
+    n[3]['props'][2] = (3, 'BlackboardKey', 0, 'Total')
+    n[3]['ins'][0] = (0, 'S32', (11, 0), 0, 0)
+    n[3]['query'] = [7]
+    n[2]['ins'][1] = (0, 'S32Base', None, OWN, 9)
+    n[6]['outs'][0] = (4, 'Velocity', True)
+    length = copy.deepcopy(n[4])
+    length['ins'][0] = (4, 'Vector', (6, 0), 0, (1.0, 2.0, 3.0))
+    length['outs'][0] = (2, 'Length', True)
+    length['query'] = [3]
+    less = copy.deepcopy(n[5])
+    less['ins'] = [(2, 'F32', (9, 0), 0, 0.0), (2, 'F32Base', None, OWN, 0.3)]
+    less['outs'] = [(1, 'Bool', True)]
+    less['query'] = [5]
+    n[1]['ins'][0] = (1, 'Input', ('multi', [(10, 0), (8, 0)]), 0, False)
+    n[1]['plugs'][0] = [(10, 'Input')]
+    n[1]['query'] = [6, 4]
+    n[7]['ins'][0] = (1, 'BoolMulti', ('multi', [(2, 0), (5, 0), (8, 0)]), 0, False)
+    n[7]['query'] = [0, 2, 4]
+    n[8]['outs'][0] = (1, 'Bool', True)
+    far = dict(type=0, name='QueryTestFar', flags=1, props=[(2, 'Distance', 0, 4.0), (3, 'Kind', 0, 'Near')],
+               ins=[(1, 'Enabled', None, OWN, True)], outs=[(0, 'Value', True)], plugs={}, query=[])
+    for x in (length, less, far): x['plugs'], x['guid'] = {}, None
+    return n + [length, less, far]
+
+
+def game_graphs(game):
+    """Every distinct logic graph of a built game copy's romfs (romfs/index.json, romfs.bin): loose ones and members
+    of packs, unpacked as the game unpacks them."""
+    import hashlib
+    import json
+    index = json.loads((game / 'romfs' / 'index.json').read_text())['files']
+    at = {f['path']: (f['offset'], f['size']) for f in index}
+    with open(game / 'romfs' / 'romfs.bin', 'rb') as rom:
+        def read(path):
+            rom.seek(at[path][0])
+            return rom.read(at[path][1])
+        dics = {}
+        for _, (_, d) in sarc_decode(decompress(read('Pack/ZsDic.pack.zs'), {})).items():
+            i, obj = load_dict(d)
+            dics[i] = obj
+        unpack = lambda d: decompress(d, dics) if d[:4] == b'\x28\xb5\x2f\xfd' else d
+        seen = set()
+        for path in sorted(at):
+            if path.endswith('.ainb') or path.endswith('.ainb.zs'):
+                found = [unpack(read(path))]
+            elif path.endswith('.pack.zs'):
+                try:
+                    found = [b for n, (_, b) in sarc_decode(unpack(read(path))).items() if n.endswith('.ainb')]
+                except (AssertionError, struct.error, ValueError):
+                    continue
+            else:
+                continue
+            for d in found:
+                h = hashlib.sha1(d).digest()
+                if h not in seen:
+                    seen.add(h)
+                    yield d
+
+
+def graph_roundtrip(exe, env, game, check):
+    """Each graph of the game written back unchanged must come out byte for byte the same; with a copy of one of its
+    nodes added, every node, value, connection and section it had must be as it was (decoded by this script)."""
+    p = subprocess.Popen([str(exe), '--graphs'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+    total = same = grown = nocopy = 0
+    for d in game_graphs(game):
+        total += 1
+        p.stdin.write(struct.pack('<I', len(d)) + d)
+        p.stdin.flush()
+        head = p.stdout.read(5)
+        if len(head) != 5:
+            check(False, 'graph round trip: the checker stopped')
+            break
+        same += head[0]
+        gn = struct.unpack_from('<I', head, 1)[0]
+        g = p.stdout.read(gn)
+        if not gn:
+            nocopy += 1
+            continue
+        try:
+            a, b = ainb_decode(d), ainb_decode(g)
+            ok = b['nodes'][:-1] == a['nodes'] and all(b['sections'].get(k) == v for k, v in a['sections'].items()
+                                                       if k != 'str') and (a['name'], a['cmds']) == (b['name'], b['cmds'])
+            new = b['nodes'][-1]
+            t = [n for n in a['nodes'] if n['name'] == new['name'] and n['type'] == new['type']]
+            ok = ok and any(dict(n, guid=None, plugs={}, query=[], outs=[(k, nm, False) for k, nm, u in n['outs']],
+                                 ins=[(k, nm, None, f if s is None else OWN, v) for k, nm, s, f, v in n['ins']])
+                            == dict(new, guid=None) for n in t)
+        except (AssertionError, struct.error, KeyError, ValueError, IndexError):
+            ok = False
+        grown += ok
+    p.stdin.close()
+    p.wait()
+    print('graph round trip: %d graphs, %d written back byte for byte the same, %d of %d with a node added read '
+          'back with all they had (%d have no node that can be copied)' % (total, same, grown, total - nocopy, nocopy))
+    check(total and same == total and grown == total - nocopy, 'graph round trip: not every graph came back')
+
 
 def build(cc, flags, env):
     exe = OUT / ('restore-check.exe' if os.name == 'nt' else 'restore-check')
     srcs = [ROOT / 'tests' / 'restore_check.c'] + [ROOT / 'runtime' / n
-                                                   for n in ('restore.c', 'restore_engine.c', 'byml.c', 'sarc.c', 'msbt.c')]
+                                                   for n in ('restore.c', 'restore_engine.c', 'byml.c', 'sarc.c', 'msbt.c',
+                                                             'ainb.c')]
     subprocess.run([cc, '-std=gnu11', '-O1', '-g', '-fno-strict-aliasing', '-Wall', '-Wextra', '-Werror',
                     '-fsanitize=address,undefined' if os.name != 'nt' else '-O1',
                     '-I', str(ROOT / 'runtime'), *map(str, srcs), '-o', str(exe), *flags, '-lm'],
@@ -497,6 +892,8 @@ def build(cc, flags, env):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--toolchain', type=Path, help='an MSYS2 environment (Windows)')
+    ap.add_argument('--game', type=Path, help='a built game copy: also read every logic graph of its romfs and write '
+                                              'it back (unchanged, and with a node added)')
     a = ap.parse_args()
     shutil.rmtree(OUT, ignore_errors=True)
     OUT.mkdir(parents=True)
@@ -543,6 +940,14 @@ def main():
     text_members = [('Msg/Navi.msbt', navi_msbt), ('Msg/Wide.msbt', wide_msbt), ('A/one.bgyml', members[0][1])]
     text_aligns = {'Msg/Navi.msbt': 0x10, 'Msg/Wide.msbt': 0x10, 'A/one.bgyml': 8}
     (OUT / 'text.zs').write_bytes(compress(sarc_encode(text_members, text_aligns)))
+    # Logic graphs: one in a pack beside a BYML member, the same loose, and the one nodes are copied from.
+    gfix, tfix = graph_fixture()
+    graph = ainb_encode(gfix)
+    graph_members = [('AI/Test.module.ainb', graph), ('A/one.bgyml', members[0][1])]
+    (OUT / 'graph.zs').write_bytes(compress(sarc_encode(graph_members, {'AI/Test.module.ainb': 8, 'A/one.bgyml': 8})))
+    (OUT / 'graph.ainb').write_bytes(graph)
+    (OUT / 'tmpl.zs').write_bytes(compress(sarc_encode([('AI/Other.module.ainb', ainb_encode(tfix))],
+                                                       {'AI/Other.module.ainb': 8})))
     hashes = {(m, l): msbt_hash(b) for m, lst in tm.items() for l, b in lst}
     assert all(hashes[k] == v for k, v in TEXT_HASHES.items()), 'TEXT_HASHES are not the fixture messages\' hashes'
 
@@ -625,6 +1030,37 @@ def main():
         _, _, old_secs = msbt_decode(navi_msbt if n == 'Msg/Navi.msbt' else wide_msbt)
         for s in old_secs:
             check(s == 'TXT2' or secs.get(s) == old_secs[s], 'text archive: %s: section %s changed' % (n, s))
+
+    # logic graphs
+    before = ainb_decode(graph)
+    gx = sarc_decode(decompress((OUT / 'graph.out.zs').read_bytes(), {}))
+    check(set(gx) == {'AI/Test.module.ainb', 'A/one.bgyml'} and gx['A/one.bgyml'][1] == members[0][1],
+          'graph pack: the other member changed')
+    check(all(off % 8 == 0 for off, _ in gx.values()), 'graph pack: a member lost its alignment')
+    try:
+        after = ainb_decode(gx['AI/Test.module.ainb'][1])
+        want = graph_expected(graph_fixture()[0])
+        got = after['nodes']
+        check(len(got) == len(want), 'graph: %d nodes, not %d' % (len(got), len(want)))
+        for i, (x, y) in enumerate(zip(got, want)):
+            if y['guid'] is None:
+                x = dict(x, guid=None)
+            check(x == y, 'graph: node %d is %r, not %r' % (i, x, y))
+        check(len({n['guid'] for n in got}) == len(got), 'graph: two nodes share a GUID')
+        for name, sec in before['sections'].items():
+            grows = name in ('str', 'multi')   # new strings and multi-input lists go at their ends
+            check(after['sections'][name][:len(sec)] == sec if grows else after['sections'].get(name) == sec,
+                  'graph: section %s changed' % name)
+        check((after['name'], after['cmds']) == (before['name'], before['cmds']), 'graph: name or commands changed')
+        loose_after = ainb_decode((OUT / 'graph.out.ainb').read_bytes())
+        lw = [dict(n) for n in before['nodes']]
+        lw[8] = dict(lw[8], ins=[(0, 'S32', None, OWN, -4), (0, 'S32Base', None, OWN, 7)])
+        check(loose_after['nodes'] == lw, 'loose graph: not the expected nodes')
+    except (AssertionError, struct.error, KeyError, ValueError) as e:
+        check(False, 'graph: the edited graph does not decode: %r' % e)
+
+    if a.game:
+        graph_roundtrip(exe, env, a.game, check)
 
     fails = [f for f in fails if f]
     for f in fails:

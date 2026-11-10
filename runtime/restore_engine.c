@@ -1,10 +1,12 @@
 // The edit engine of the restorations (restore.h restore_file): one game file unpacked (a zstd frame, with the
 // dictionary of its id), the members a pack gains added, its BYML parsed (or the BYML members a pack's edits name),
 // the edits applied to the tree, written back, read back to check it holds what was meant, and packed again as the
-// original was; a message file (MSBT) member of a text archive gets its messages replaced (msbt.c). An edit applies
+// original was; a message file (MSBT) member of a text archive gets its messages replaced (msbt.c), a logic graph
+// (AINB, a loose file or a pack member) its structure changed (ainb.c), all of its edits or none. An edit applies
 // only when what it names is there as declared: the object by Hash, Gyaml and Translate (in the file that places it,
 // for a copy from another file), the value it changes at the value the game ships, the key it adds missing, the
-// member it adds missing, the message it replaces by the hash of the game's.
+// member it adds missing, the message it replaces by the hash of the game's, the graph's nodes by their type and
+// values and each value or connection it changes as the game ships it.
 //
 // Each document (the file, or each pack member some edit names) is checked on its own: one that does not read back as
 // edited, or a member that cannot be put back into its pack, loses only its own edits, and the file is served with the
@@ -16,6 +18,7 @@
 #include <string.h>
 #include <zstd.h>
 
+#include "ainb.h"
 #include "byml.h"
 #include "msbt.h"
 #include "restore.h"
@@ -444,6 +447,9 @@ static int apply_one(Ctx *c, Byml *b, const RestoreEdit *e, int k) {
     case RESTORE_KIND_SET_MESSAGE:
         say(c, k, "skipped: not a message file (MSBT)");
         return 0;
+    case RESTORE_KIND_GRAPH:
+        say(c, k, "skipped: not a logic graph (AINB)");
+        return 0;
     }
     say(c, k, "skipped: an edit of this kind needs %s", e->kind == RESTORE_KIND_ADD_MEMBER ? "a pack" : "more fields");
     return 0;
@@ -498,6 +504,109 @@ static uint8_t *edit_messages(Ctx *c, const RestoreEdit *const *edits, const int
     }
     *out_n = cur_n;
     return cur;
+}
+
+// The graph a GRAPH ADD copies from: e->from (member e->from_member, NULL: the file is one) read (ainb_free it); NULL
+// after saying why.
+static Ainb *template_graph(Ctx *c, const RestoreEdit *e, int k) {
+    const char *why;
+    size_t at = 0, len;
+    Source *s = source(c, e->from, &why);
+    if (!s) return say(c, k, "skipped: %s: %s", e->from, why), NULL;
+    len = s->n;
+    if (e->from_member && !sarc_find(s->raw, s->n, e->from_member, &at, &len, &why))
+        return say(c, k, "skipped: %s: %s: %s", e->from, e->from_member, why), NULL;
+    Ainb *t = ainb_read(s->raw + at, len, &why);
+    if (!t) say(c, k, "skipped: %s%s%s: %s", e->from, e->from_member ? ": " : "", e->from_member ? e->from_member : "", why);
+    return t;
+}
+
+// The GRAPH edits idx[0..cnt) of one logic graph doc[0..n) (`what`), in their order, all or none; the graph rewritten
+// (malloc'd) when they applied, else NULL.
+static uint8_t *edit_graph(Ctx *c, const RestoreEdit *const *edits, const int *idx, int cnt, const char *what,
+                           const uint8_t *doc, size_t n, int *ok, size_t *out_n) {
+    const char *why;
+    Ainb *g = ainb_read(doc, n, &why);
+    if (!g) {
+        for (int j = 0; j < cnt; j++) say(c, idx[j], "skipped: %s: %s", what, why);
+        return NULL;
+    }
+    char text[400];
+    int failed = 0, any = 0;
+    for (int j = 0; j < cnt; j++) {
+        const RestoreEdit *e = edits[idx[j]];
+        int k = idx[j], r = 0, i, from, op = e->graph_op;
+        if (e->kind != RESTORE_KIND_GRAPH) {
+            say(c, k, "skipped: %s is a logic graph, which only GRAPH edits change", what);
+            failed = 1;
+            continue;
+        }
+        if (!e->node || (op == RESTORE_GRAPH_OP_FIND || op == RESTORE_GRAPH_OP_ADD ? !e->node_type
+                         : op == RESTORE_GRAPH_OP_SET ? !e->param || !e->text_was || !e->text_now
+                         : op == RESTORE_GRAPH_OP_LINK ? !e->param || !e->text_was || !e->src || !e->src_out : 1)) {
+            say(c, k, "skipped: a GRAPH edit needs more fields");
+            failed = 1;
+            continue;
+        }
+        switch (op) {
+        case RESTORE_GRAPH_OP_FIND:
+        case RESTORE_GRAPH_OP_ADD:
+            if (op == RESTORE_GRAPH_OP_FIND) {
+                i = ainb_find(g, e->node_type, e->match ? e->match : "", text, sizeof text);
+            } else {
+                Ainb *t = e->from ? template_graph(c, e, k) : g;
+                if (!t) {
+                    failed = 1;
+                    continue;
+                }
+                i = ainb_find(t, e->node_type, e->match ? e->match : "", text, sizeof text);
+                if (i >= 0) i = ainb_add(g, t, i, text, sizeof text);
+                if (t != g) ainb_free(t);
+            }
+            if (i >= 0 && !ainb_name(g, e->node, i)) snprintf(text, sizeof text, "too many named nodes"), i = -1;
+            r = i >= 0;
+            say(c, k, "%s@%s: %s", r ? "" : "skipped: ", e->node, text);
+            break;
+        default:
+            i = ainb_named(g, e->node);
+            from = e->src ? ainb_named(g, e->src) : 0;
+            if (i < 0 || from < 0) {
+                say(c, k, "skipped: no node is named @%s (the edit that names it did not apply)", i < 0 ? e->node : e->src);
+                failed = 1;
+                continue;
+            }
+            r = op == RESTORE_GRAPH_OP_SET ? ainb_set(g, i, e->param, e->text_was, e->text_now, text, sizeof text)
+                                           : ainb_link(g, from, e->src_out, i, e->param, e->text_was, text, sizeof text);
+            say(c, k, "%s@%s: %s", r == 1 ? "" : "skipped: ", e->node, text);
+            break;
+        }
+        if (r == 1) ok[k] = 1, any = 1;
+        else failed = 1;
+    }
+    uint8_t *out = NULL;
+    if (any && !failed) {
+        // read back: the file the game gets must read as a graph and write back as itself
+        out = ainb_write(g, out_n);
+        Ainb *back = out ? ainb_read(out, *out_n, &why) : NULL;
+        size_t again_n = 0;
+        uint8_t *again = back ? ainb_write(back, &again_n) : NULL;
+        if (!again || again_n != *out_n || memcmp(again, out, again_n)) {
+            for (int j = 0; j < cnt; j++)
+                if (ok[idx[j]]) say(c, idx[j], "undone: %s does not read back as written", what);
+            free(out);
+            out = NULL;
+            any = 0;
+        }
+        free(again);
+        ainb_free(back);
+    } else if (any) {
+        for (int j = 0; j < cnt; j++)
+            if (ok[idx[j]]) say(c, idx[j], "undone: another edit of %s was skipped, and a graph changes whole or not at all", what);
+    }
+    if (!out)
+        for (int j = 0; j < cnt; j++) ok[idx[j]] = 0;
+    ainb_free(g);
+    return out;
 }
 
 // The edits idx[0..cnt) of one document doc[0..n) (a BYML file, or a pack's BYML member `what`); the document
@@ -606,7 +715,7 @@ void *restore_file(const RestoreEdit *const *edits, int n, const void *in, size_
             ok[k] = add_member(&c, edits[k], k, &raw, &rn, sizes ? &sizes[k].now : NULL);
         }
     // One document at a time: the file itself, or each pack member some edit names, in the order the edits name them;
-    // a message file (MSBT) takes SET_MESSAGE edits, any other document is a BYML.
+    // a message file (MSBT) takes SET_MESSAGE edits, a logic graph (AINB) GRAPH edits, any other document is a BYML.
     for (int k = 0; k < n; k++) {
         if (done[k]) continue;
         const char *m = edits[k]->member;
@@ -621,6 +730,8 @@ void *restore_file(const RestoreEdit *const *edits, int n, const void *in, size_
         const char *what = m ? m : "the file";
         uint8_t *doc = len >= 8 && !memcmp(raw + at, "MsgStdBn", 8)
                            ? edit_messages(&c, edits, idx, cnt, what, raw + at, len, ok, &doc_n)
+                       : len >= 4 && !memcmp(raw + at, "AIB ", 4)
+                           ? edit_graph(&c, edits, idx, cnt, what, raw + at, len, ok, &doc_n)
                            : edit_doc(&c, edits, idx, cnt, what, raw + at, len, ok, &doc_n);
         if (!doc) continue;
         uint8_t *next = doc;
