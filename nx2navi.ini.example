@@ -663,6 +663,11 @@
 # restore_stalfos_pair = 0
 # Carried in Jabu-Jabu's belly, Ruto gets impatient when Link stands still for a few seconds.
 # restore_ruto_squirms = 0
+# Link jumps by himself when he runs off a ledge (faster than 3 m/s); walking off one still drops him. Code, not file
+# edits: the switch acts at once.
+# restore_auto_hop = 0
+# A jump off a ledge at least 5 m above deep water is a dive into it. Code: the switch acts at once.
+# restore_ledge_dive = 0
 
 [diagnostics]
 # Extra lines in the log, comma separated: svc, host, ipc, fs, gfx, perf, sched, audio, present or all. The menu's

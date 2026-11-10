@@ -19,6 +19,8 @@ restoration that edits files is a list of edits, and the game applies them once 
 | `WALLMASTER_NO_BEAM` | A Wallmaster's coming drop is not lit by a column of purple light that grows above Link. The coloured ring it draws on the floor stays, and no shadow of the hand shows: neither is in a file the restorations can change. |
 | `STALFOS_PAIR` | In the Forest Temple, a Stalfos of a pair that falls gets up again 10 s later unless its partner falls too. It comes back dropping in, as this release brings Stalfos in: the original's pile of bones has no model or animation in this release. Not yet seen in the game. |
 | `RUTO_SQUIRMS` | Carried in Jabu-Jabu's belly, Ruto gets impatient (this release's fidget and line) when Link stands still for a few seconds, not only after minutes in one room. Not yet seen in the game. |
+| `AUTO_HOP` | Link jumps by himself when he runs off a ledge (faster than 3 m/s); walking off one still drops him. Code: `runtime/restore_ledge.c`. |
+| `LEDGE_DIVE` | A jump off a ledge at least 5 m above deep water (2 m deep or more) is a dive into it. Code: `runtime/restore_ledge.c`. |
 
 The tab's own texts are in the menu's four languages; a restoration's name and description are English.
 

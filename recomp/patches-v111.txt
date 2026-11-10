@@ -19,6 +19,7 @@ set res_fixed   NX2NAVI_PATCH_RES_FIXED   0
 set ostep       NX2NAVI_OCARINA_REALTIME  1
 set zstd        NX2NAVI_ZSTD_NATIVE       1
 set osolver     NX2NAVI_PHYSICS_STEPS     1
+set ledge       NX2NAVI_PATCH_LEDGE       1
 
 # Real-time step: the framework's per-frame update (main+0x6e6be0) gives the time manager **[main+0x4c7e890] its
 # nominal frame through main+0x3b4e300 (+0x10 frames per update, +0x14 the inverse, +0x18 seconds, +0x1c the rate),
@@ -122,3 +123,15 @@ site zstd main e910c  9400089d 9536dfb9   # bl ZSTD_decompressMultiFrame -> page
 site zstd main bf72e0 97d3d028 950aa744   # bl ZSTD_decompressMultiFrame -> page+0xff0
 site zstd main f50164 97c66c87 94fd43a3   # bl ZSTD_decompressMultiFrame -> page+0xff0
 site zstd main f5c2c  94000015 9536acd5   # bl the stream feed -> page+0xf80
+
+# Link at a ledge (runtime/restore_ledge.c, the restorations AUTO_HOP and LEDGE_DIVE): each site calls the host
+# function at page +0xf50, which tells the sites apart by the return address, does the instruction it replaces and,
+# with a restoration on, picks Jump or WaterDive instead. On foot the walk scheduler picks Link's next action: its
+# update main+0x7f70d0 and its transitions main+0x7fa150 pass the child's index, kept at +0x32 (Jump), +0x33 (Fall) and
+# +0x42 (WaterDive) of the scheduler, to main+0x802000. The set is on: with both restorations off the host function
+# only does the replaced instruction.
+site ledge main 7f755c f94052c8 951aa67d    # ldr x8, [x22, #0xa0]: no ground under Link, the stick tilt the air grace tests
+site ledge main 7f75a0 3940ce61 951aa66c    # ldrb w1, [x19, #0x33]: the update picks Fall
+site ledge main 7f72a4 3940ca61 951aa72b    # ldrb w1, [x19, #0x32]: the update picks Jump (the button)
+site ledge main 7fa524 52800648 951a9a8b    # mov w8, #0x32: the transitions pick Jump (the button)
+site ledge main 301e9b4 bd4047e1 947a0967   # ldr s1, [sp, #0x44]: the diving game's water test, the surface's height
