@@ -20,6 +20,7 @@ set ostep       NX2NAVI_OCARINA_REALTIME  1
 set zstd        NX2NAVI_ZSTD_NATIVE       1
 set osolver     NX2NAVI_PHYSICS_STEPS     1
 set ledge       NX2NAVI_PATCH_LEDGE       1
+set first_person NX2NAVI_RESTORE_FIRST_PERSON 0
 
 # Real-time step: the framework's per-frame update (main+0x6e6be0) gives the time manager **[main+0x4c7e890] its
 # nominal frame through main+0x3b4e300 (+0x10 frames per update, +0x14 the inverse, +0x18 seconds, +0x1c the rate),
@@ -135,3 +136,14 @@ site ledge main 7f75a0 3940ce61 951aa66c    # ldrb w1, [x19, #0x33]: the update 
 site ledge main 7f72a4 3940ca61 951aa72b    # ldrb w1, [x19, #0x32]: the update picks Jump (the button)
 site ledge main 7fa524 52800648 951a9a8b    # mov w8, #0x32: the transitions pick Jump (the button)
 site ledge main 301e9b4 bd4047e1 947a0967   # ldr s1, [sp, #0x44]: the diving game's water test, the surface's height
+
+# First-person look (runtime/restore_first_person.c, the FIRST_PERSON restoration, which also switches the set while
+# the game runs). Two host calls on the patch page; each keeps every guest register but the one its displaced load
+# writes, and performs that load. The camera component's apply (main+0x4c4120) copies the pose its camera mode wrote
+# (eye and target as doubles at +0x70 and +0x98, near +0xbc) into the pose the renderer, the engine camera and the camera
+# actor take; its first read of it goes to page +0xf60, which writes the view's pose first while the look is on. The
+# player camera's mode switcher (main+0x27bf960) has chosen this update's mode (node +0x34) wherever its paths meet at
+# main+0x27bfcb0; that read goes to page +0xf70, which keeps the mode and the node. x30, which the bl writes, is saved
+# by both functions' prologues and read again only after calls of their own.
+site first_person main 4c41d4 a9472408 95277363    # ldp x8, x9, [x0, #0x70] -> bl page+0xf60
+site first_person main 27bfcb0 39407a69 949b84b0   # ldrb w9, [x19, #0x1e] -> bl page+0xf70

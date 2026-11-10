@@ -21,6 +21,7 @@ restoration that edits files is a list of edits, and the game applies them once 
 | `RUTO_SQUIRMS` | Carried in Jabu-Jabu's belly, Ruto gets impatient (this release's fidget and line) when Link stands still for a few seconds, not only after minutes in one room. Not yet seen in the game. |
 | `AUTO_HOP` | Link jumps by himself when he runs off a ledge (faster than 3 m/s); walking off one still drops him. Code: `runtime/restore_ledge.c`. |
 | `LEDGE_DIVE` | A jump off a ledge at least 5 m above deep water (2 m deep or more) is a dive into it. Code: `runtime/restore_ledge.c`. |
+| `FIRST_PERSON` | The first-person look: L3 held on the ground shows the view from Link's eyes, the stick turns it. Code, not edits (below). |
 
 The tab's own texts are in the menu's four languages; a restoration's name and description are English.
 
@@ -68,6 +69,29 @@ restoration, switched on or not, to the files as the game would read them, serve
 (applied, or skipped and why) and exits 1 when one was skipped. `python tests/restore_check.py` tests the engine, the
 BYML and SARC readers and writers and `restore.c`'s switches on files of its own (no game files), and runs the readers
 on every cut length of its files and on thousands of copies with bits flipped.
+
+## First-person look (`FIRST_PERSON`)
+
+In the original a button held while Link stood on the ground put the view in his eyes; the stick looked around, Link
+stood still, and letting go returned to the camera behind him. The remake has no such view, so this one is code
+(`runtime/restore_first_person.c`) and two host calls the patch set `first_person` adds to the game's camera
+(`recomp/patches-v111.txt`; game 1.1.1 only). It follows its switch while the game runs.
+
+- **The button** is the Switch L3, the left stick click (V on the keyboard), which the game itself does not use; the
+  Controls tab's L3 row (`bind_lclick`) moves it to another key or button.
+- **Where it works**: the player camera is the camera shown, in its Normal or Indoor mode, ZL is not held, and Link
+  stands on the ground. Not while targeting, aiming an item, swimming, climbing or hanging, crawling, pushing, riding,
+  in a fixed camera, a talk, an event or a cutscene: there the button does nothing (the log says why: `restore:
+  FIRST_PERSON: not here (...)`). A view that is on ends as soon as one of these stops holding, and the button has to
+  be pressed again. Targeting with nothing in reach leaves the camera in its Normal mode, so ZL held stands for it;
+  with the game's *Targeting Type* set to toggle, targeting that stays on after ZL is let go is not caught.
+- **The view**: Link's eyes (0.98 m above his feet as a child, 1.49 m as an adult), first where he faces. The right
+  stick turns it, the mouse too where the mouse moves the camera: up to 150 degrees a second across and 100 up and
+  down, from 60 degrees down to 70 up. It blends in over 0.15 s and back to the game's camera, which kept running,
+  over 0.3 s. Link's model is hidden while the view is near his head; the near plane is 0.2 m.
+- **The game** keeps running: enemies, Navi and the HUD go on. While the view is on the game gets only Plus (its menu)
+  and Minus (the map): Link stands, and the item buttons, the sword, A and targeting do nothing, as in the original,
+  where the look was for looking (the log names the buttons it kept from the game).
 
 ## Adding one
 
