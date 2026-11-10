@@ -1245,6 +1245,54 @@ int plat_run_self(const char *env_name, const char *env_value, char *out, size_t
     return (int)code;
 }
 
+// One argument of a command line as CommandLineToArgvW and the C runtime read it back: in quotes when it has a space,
+// a tab or a quote, with a quote escaped and the backslashes before a quote or the closing quote doubled.
+static size_t quote_arg(const wchar_t *a, wchar_t *out, size_t at, size_t cap) {
+    int plain = *a && !wcspbrk(a, L" \t\"");
+    if (!plain && at < cap) out[at++] = L'"';
+    for (const wchar_t *p = a;; p++) {
+        size_t slashes = 0;
+        while (*p == L'\\') p++, slashes++;
+        size_t times = !plain && (!*p || *p == L'"') ? 2 : 1;
+        for (size_t i = 0; i < slashes * times && at < cap; i++) out[at++] = L'\\';
+        if (!*p) break;
+        if (*p == L'"' && at < cap) out[at++] = L'\\';
+        if (at < cap) out[at++] = *p;
+    }
+    if (!plain && at < cap) out[at++] = L'"';
+    return at;
+}
+
+int plat_run(const char *const *argv, uint32_t timeout_ms) {
+    enum { CAP = 32768 };
+    wchar_t *cmd = malloc(CAP * sizeof *cmd), arg[WPATH];
+    if (!cmd) return -1;
+    size_t at = 0;
+    for (int i = 0; argv[i]; i++) {
+        if (!widen(argv[i], arg, WPATH)) {
+            free(cmd);
+            return -1;
+        }
+        if (i && at < CAP) cmd[at++] = L' ';
+        at = quote_arg(arg, cmd, at, CAP - 1);
+    }
+    cmd[at] = 0;
+    STARTUPINFOW si = {.cb = sizeof si};
+    PROCESS_INFORMATION pi;
+    // CreateProcessW finds a bare program name in the system folders (System32 holds curl.exe from Windows 10 1803 on)
+    // and on PATH; no handles are inherited, so the child's standard handles are none
+    BOOL ok = at < CAP - 1 && CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    free(cmd);
+    if (!ok) return -1;
+    int killed = WaitForSingleObject(pi.hProcess, timeout_ms ? timeout_ms : INFINITE) != WAIT_OBJECT_0;
+    if (killed) TerminateProcess(pi.hProcess, 1), WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    return killed ? -2 : (int)code;
+}
+
 int plat_random(void *out, size_t n) {
     return BCryptGenRandom(NULL, out, (ULONG)n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
 }

@@ -10,6 +10,7 @@
 // The table is filled once by rt_dispatch_init and then made read-only, so any number of threads read it without
 // locks or per-thread caches. Host (HLE) functions at addresses outside the modules live in a small hash table that
 // is also fixed at init; they are looked up only after the flat table misses.
+#include "bug_report.h"
 #include "dispatch.h"
 #include "host.h"
 #include "prof.h"
@@ -55,6 +56,7 @@ void rt_fatal(const char *fmt, ...) {
     plat_commit_info(&proc, &used, &limit);
     rt_log("fatal: memory commit: this process %.0f MB, the system %.0f of %.0f MB", proc, used, limit);
     kern_free_cores_note();
+    bug_report_crashed();   // the next start offers this run's report (bug_report.c)
     prof_sampler_write();   // NX2NAVI_PROFILE: what was sampled until now, else a crash loses the whole profile
     // RivaTuner Statistics Server's profile as it was: left with the game's limit in it, the next run would take that
     // limit for the player's own (rtss_limit.c; it gives up after a second if the failing thread holds its lock)

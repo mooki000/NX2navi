@@ -35,6 +35,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "bug_report.h"
 #include "cfg.h"
 #include "host.h"
 #include "restore.h"
@@ -102,7 +103,11 @@ static void bridge_site(Cpu *c) {
     rt_call(c, MAIN + GAMEDATA_UPDATE, 1, mgr);
     unsigned v = cfg_version();
     if (v != seen_version) seen_version = v, on = restore_key_on("DRAWBRIDGE_NIGHT");
-    if (!mgr || frame_step_world_us() < 0) return;   // not in play yet: the clock may still be the title screen's
+    if (!mgr) return;
+    // a bug report gathering the player's state (bug_report.c): this update runs once a frame on the game thread,
+    // whether the restoration is on or not
+    if (bug_report_state_wanted()) bug_report_state_put(get_int(mgr, AREA), get_bool(mgr, CHILDHOOD), day_second(c));
+    if (frame_step_world_us() < 0) return;   // not in play yet: the clock may still be the title screen's
     int64_t closed = get_bool(mgr, BRIDGE_CLOSE), area = get_int(mgr, AREA);
     if (closed < 0 || area < 0) return;   // no save loaded yet
     if (get_bool(mgr, GOT_RUBY) == 1 && get_bool(mgr, GOT_SAPPHIRE) == 1 && get_bool(mgr, ESCAPE_SEEN) == 0) return;

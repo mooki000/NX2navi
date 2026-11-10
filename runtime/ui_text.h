@@ -306,7 +306,29 @@ typedef enum {
     UI_MENU_SAVE_FILE_MADE,          // "%s": the new file
     UI_MENU_SAVE_FILE_RENAMED, UI_MENU_SAVE_FILE_DELETED /* "%s": the file */, UI_MENU_SAVE_FILE_E_FAILED,
     UI_MENU_SAVE_FILE_E_NAME_SET,   // "%s": save_file, which picks the file of the name a Rename was refused
-    UI_MENU_LAST_ID = UI_MENU_SAVE_FILE_E_NAME_SET,
+    // the Saves tab's bug report group (ui/report_page.cpp, bug_report.c): Send a bug report opens a window that shows
+    // what goes before it goes; the start after a fatal error opens it by itself. UI_MENU_REPORT_TO to
+    // UI_MENU_REPORT_E_SAVE are printf formats with at most one "%s"
+    UI_MENU_REPORT_GROUP, UI_MENU_REPORT_SEND, UI_MENU_REPORT_SEND_DESC,
+    UI_MENU_REPORT_LAST_CRASH,     // the row's value while the last run's fatal error waits to go
+    UI_MENU_REPORT_TITLE,          // the window's title
+    UI_MENU_REPORT_CRASH_TITLE,    // its title at the start after a fatal error
+    UI_MENU_REPORT_CRASH_TEXT,     // under that title: what the offer is
+    UI_MENU_REPORT_GATHERING,      // while the report is gathered
+    UI_MENU_REPORT_WHAT,           // above the list of what goes
+    UI_MENU_REPORT_NOTE,           // the label of the text field
+    UI_MENU_REPORT_DO_SEND,        // the button that sends
+    UI_MENU_REPORT_DO_SAVE,        // the same button without report_url: it writes the zip only
+    UI_MENU_REPORT_CANCEL, UI_MENU_REPORT_CLOSE,
+    UI_MENU_REPORT_SENDING,
+    UI_MENU_REPORT_NO_URL,         // report_url unset: the report is written, not sent
+    UI_MENU_REPORT_TO,             // "%s": the receiver's address
+    UI_MENU_REPORT_SENT,           // "%s": the issue's address
+    UI_MENU_REPORT_SAVED,          // "%s": the zip
+    UI_MENU_REPORT_E_SEND,         // "%s": why it was not sent (English, from bug_report_send)
+    UI_MENU_REPORT_KEPT,           // "%s": the zip, kept after a failed send
+    UI_MENU_REPORT_E_SAVE,         // "%s": the folder the zip could not be written into
+    UI_MENU_LAST_ID = UI_MENU_REPORT_E_SAVE,
     // the boot screen while the boot prewarm prepares shaders and pipelines (boot.c, ui/menu.cpp menu_boot_frame)
     UI_BOOT_TITLE, UI_BOOT_STARTING,
     UI_BOOT_SHADERS, UI_BOOT_PIPELINES,   // printf: "%lld" done, "%lld" total
