@@ -460,7 +460,8 @@ static int fonts_up(float scale) {
         // what the title face shows in the CJK languages: the menu's title and tabs (Simplified Chinese menu text) and
         // the boot screen's title (the game's language)
         static const UiTextId titles[] = {UI_MENU_TITLE, UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND,
-                                          UI_MENU_TAB_CONTROLS, UI_MENU_TAB_SAVES, UI_MENU_TAB_RESTORE, UI_BOOT_TITLE};
+                                          UI_MENU_TAB_CONTROLS, UI_MENU_TAB_SAVES, UI_MENU_TAB_ADVANCED, UI_MENU_TAB_RESTORE,
+                                          UI_BOOT_TITLE};
         for (int i = 0; i < N; i++) {
             if (!data[i]) continue;
             ImFontGlyphRangesBuilder b;
