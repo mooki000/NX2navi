@@ -73,6 +73,7 @@ NEVER(romfs_overlay_count) NEVER(romfs_read) NEVER(romfs_size) NEVER(rt_call) NE
 int romfs_owns(const char *path) { (void)path; return 0; }
 void fs_trace(const char *what, const char *path) { (void)what, (void)path; }
 void resume_save_file(const char *path, int write) { (void)path, (void)write; }
+void voice_lang_options_opened(void) {}   // fs_host.c tells voice_lang.c when the game reads option.sav
 
 // The game thread's answer: restore_drawbridge.c puts the state once a frame while a report wants it.
 static void game_thread(void *arg) {
