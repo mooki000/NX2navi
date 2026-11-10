@@ -63,6 +63,7 @@ void vk_queue_unlock(void);
 void res_sizes(unsigned out[2], unsigned scene[2]);
 int res_adjustable(void);
 int wide_available(void);
+int vk_dlaa_status(unsigned *w, unsigned *h, unsigned *ow, unsigned *oh, int *fsr);
 const char *const *vk_color_preset(const char *name);
 int vk_hdr_wanted(void);
 int vk_hdr_active(void);
@@ -1709,6 +1710,14 @@ static void perf_picture(const MenuTarget *t, PerfPanel *p) {
     // The 3D scene's size is known only where resolution.c sets it (the builds with its patch sets); Ocarina sizes its
     // own scene dynamically and res_sizes would report a fixed 1600x900, so the line is left out
     p->scene_known = res_adjustable() != 0;
+    // DLSS (or FSR 3.1) running: the 3D scene line shows what it upscales from and to; the Scaling line below is only the
+    // last step, the picture to the window
+    unsigned dw, dh, dow, doh;
+    int fsr;
+    if (vk_dlaa_status(&dw, &dh, &dow, &doh, &fsr)) {
+        snprintf(v[2], sizeof v[2], "%s %ux%u -> %ux%u", fsr ? "FSR 3.1" : dw >= dow ? "DLAA" : "DLSS", dw, dh, dow, doh);
+        p->scene_known = true;
+    }
 }
 
 // The full panel (ui/perf_panel.cpp draws it in the menu's look): the numbers of this frame.

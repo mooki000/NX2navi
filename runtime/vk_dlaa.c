@@ -1847,6 +1847,15 @@ static int output_target(VkFormat f) { return srgb8(f) || vk_hdr_native_picture(
 
 double wide_dlss_share(void);   // widescreen.c: the DLSS mode's share of the picture (1 DLAA), 0 off
 
+// The latest evaluation's sizes, for the overlay: 1 while DLSS (or FSR 3.1) ran in the last half second. The overlay
+// reads this on another thread, so the size record is taken once: the records are a static array, never freed.
+int vk_dlaa_status(unsigned *w, unsigned *h, unsigned *ow, unsigned *oh, int *fsr) {
+    const struct Size *s = D.last;
+    if (!D.on || !s || !D.last_eval_ns || plat_now_ns() - D.last_eval_ns > 500000000ull) return 0;
+    *w = s->w, *h = s->h, *ow = s->ow, *oh = s->oh, *fsr = fsr3();
+    return 1;
+}
+
 void vk_dlaa_pass(VkExec *ex) {
     const VkExecTarget *c = &ex->color[0], *z = &ex->depth;
     if (!dl_active()) return;
