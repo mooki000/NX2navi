@@ -36,7 +36,9 @@ static bool g_crash;                         // this report carries the last run
 static std::atomic<bool> g_crash_gone;       // ... and it went (sent or saved): the row says no more of it
 static std::atomic<int> g_gen;               // each opening: a gather of an earlier one drops its preview
 static std::atomic<bool> g_cursor_due;       // the outcome is shown: its Close button takes the cursor
-static bool g_window_shown, g_fresh, g_test_send;
+static bool g_window_shown, g_fresh, g_test_send, g_test_cancel;
+// the window was drawn with the menu open since it opened: only such a report closes with the menu (report_cancel)
+static bool g_seen;
 static char g_note[512], g_shot[1200];
 static uint64_t g_shot_frame, g_first_frame;
 static bool g_offered;
@@ -52,6 +54,7 @@ static void open_report(bool crash) {
     g_crash = crash;
     g_note[0] = g_shot[0] = 0;
     g_fresh = true;
+    g_seen = false;
     plat_mutex_lock(&g_lock);
     g_made.summary[0] = 0;
     g_result = -1;
@@ -67,7 +70,11 @@ static void gather_main(void *arg) {
     char dir[1024];
     BugReportWhat what = {g_crash, "", g_shot[0] ? g_shot : nullptr};
     BugReportMade *made = new BugReportMade;
+    const uint64_t t0 = plat_now_ns();
+    rt_log("bug report: gathering starts");
     bool ok = bug_report_dir(dir, sizeof dir) && bug_report_make(dir, &what, 1, made);
+    rt_log("bug report: gathered in %llu ms%s", (unsigned long long)((plat_now_ns() - t0) / 1000000),
+           ok ? "" : ", failed");
     plat_mutex_lock(&g_lock);
     int expect = S_GATHER;
     if (gen == g_gen.load() && g_state.compare_exchange_strong(expect, S_READY)) {
@@ -162,6 +169,10 @@ void report_rows(void) {
 bool report_modal(void) { return g_window_shown; }
 
 void report_cancel(void) {
+    // The menu's opening calls this too, as the overlay takes the reset of a close at the next opening. A report
+    // opened while the menu was closed (the offer after a fatal error, the test hook) is what this opening shows, and
+    // its gather often ends before the menu's first frame: it stays.
+    if (!g_seen) return;
     int s = g_state.load();
     if (s == S_READY || s == S_DONE) {
         if (s == S_READY && g_shot[0]) plat_file_delete(g_shot);   // not sent: no picture stays behind
@@ -186,7 +197,7 @@ void report_window(float scale) {
                                               ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::PopStyleVar();
     if (!shown) return;
-    g_window_shown = true;
+    g_window_shown = g_seen = true;
     const bool fresh = g_fresh;
     g_fresh = false;
     const ImVec2 box = ImGui::GetWindowPos(), box_size = ImGui::GetWindowSize();
@@ -206,7 +217,7 @@ void report_window(float scale) {
     } else if (s == S_READY || s == S_SENDING) {
         ImGui::TextUnformatted(menu_text(UI_MENU_REPORT_WHAT));
         ImGui::BeginChild("##report_list", ImVec2(wrap, ImGui::GetTextLineHeightWithSpacing() * 13),
-                          ImGuiChildFlags_Borders, ImGuiWindowFlags_NavFlattened);
+                          ImGuiChildFlags_Borders | ImGuiChildFlags_NavFlattened);
         plat_mutex_lock(&g_lock);
         ImGui::PushTextWrapPos(0);
         ImGui::TextUnformatted(g_made.summary);
@@ -261,7 +272,12 @@ void report_window(float scale) {
         close = true;
         menu_sound_play(MENU_SOUND_CANCEL);
     }
+    if (g_test_cancel && s != S_SENDING) {   // the test hook's REPORT_CANCEL: Not now, or Close
+        g_test_cancel = false;
+        close = true;
+    }
     if (close) {
+        rt_log("bug report: the window closes%s", s == S_DONE ? "" : "; nothing was sent");
         // a gather still running finishes into a closed window: its preview is dropped with the next opening
         if (g_shot[0] && s != S_DONE) plat_file_delete(g_shot);
         g_state.store(S_CLOSED);
@@ -282,6 +298,10 @@ int report_test_set(const char *key, const char *value) {
     }
     if (!strcmp(key, "NX2NAVI_REPORT_SEND")) {
         g_test_send = true;   // report_frame presses Send once what goes is shown
+        return 1;
+    }
+    if (!strcmp(key, "NX2NAVI_REPORT_CANCEL")) {
+        g_test_cancel = true;   // report_window closes once it is shown, as Not now does
         return 1;
     }
     if (!strcmp(key, "NX2NAVI_CRASH")) {

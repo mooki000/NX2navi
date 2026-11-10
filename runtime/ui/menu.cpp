@@ -535,7 +535,7 @@ extern "C" void menu_vk_release(void) {
 // right, enter, escape or tab) and TYPE=<text> types text, into the page shown as the window's key and text events go
 // (test_key), also on the hook's own pages, which drop the window's events; so a run fills a text field and confirms it
 // as a keyboard does. SAVE_FILE_OPEN, SAVE_FILE_PAGE and SAVE_FILE_PLAY drive the Saves tab's file window
-// (ui/saves_page.h saves_test_set); REPORT_OPEN, REPORT_NOTE, REPORT_SEND and CRASH its bug report
+// (ui/saves_page.h saves_test_set); REPORT_OPEN, REPORT_NOTE, REPORT_SEND, REPORT_CANCEL and CRASH its bug report
 // (ui/report_page.h report_test_set).
 // Ocarina of Time: the options this port has, and the restorations (ui/restore_tab.cpp)
 enum { TAB_SCREEN, TAB_GAME, TAB_SAVES, TAB_SOUND, TAB_CONTROLS, TAB_RESTORE, TAB_COUNT };
@@ -1936,7 +1936,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
         io.ClearInputMouse();
         binds_cancel();          // a cell waiting for a press when the menu closed: no press binds on the next opening
         saves_cancel();          // a save file's window closes; the list is read again
-        report_cancel();         // a bug report waiting for the player closes; one gathering or sending goes on
+        report_cancel();         // a bug report the player left waiting closes; one gathering or sending goes on
         g_sound_fresh = true;
         g_last_ns = 0;
         g_focus_page = g_tab_request >= 0 ? g_tab_request : g_tab;   // opening: the first row has the cursor
