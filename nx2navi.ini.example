@@ -659,6 +659,10 @@
 # restore_navi_dark_link = 0
 # A Wallmaster's coming drop is not lit by a column of purple light (the ring on the floor stays).
 # restore_wallmaster_no_beam = 0
+# In the Forest Temple, a Stalfos of a pair that falls gets up again 10 s later unless its partner falls too.
+# restore_stalfos_pair = 0
+# Carried in Jabu-Jabu's belly, Ruto gets impatient when Link stands still for a few seconds.
+# restore_ruto_squirms = 0
 
 [diagnostics]
 # Extra lines in the log, comma separated: svc, host, ipc, fs, gfx, perf, sched, audio, present or all. The menu's

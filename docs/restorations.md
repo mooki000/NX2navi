@@ -16,6 +16,8 @@ a restoration is a list of edits, and the game applies them once at start to the
 | `LOST_WOODS_BY_EAR` | The Lost Woods without the floating notes and the trails of mist: Saria's song alone shows the way. Not yet seen in the game. |
 | `NAVI_DARK_LINK` | Navi's hint at Dark Link in the Water Temple: "Dark Link" and "Conquer yourself!" (English; in Japanese the original's ダークリンク, 自分自身に打ち勝つのよ！！). The German and French texts keep this release's lines: the original's wording in those languages is not known to us. Not yet seen in the game. |
 | `WALLMASTER_NO_BEAM` | A Wallmaster's coming drop is not lit by a column of purple light that grows above Link. The coloured ring it draws on the floor stays, and no shadow of the hand shows: neither is in a file the restorations can change. |
+| `STALFOS_PAIR` | In the Forest Temple, a Stalfos of a pair that falls gets up again 10 s later unless its partner falls too. It comes back dropping in, as this release brings Stalfos in: the original's pile of bones has no model or animation in this release. Not yet seen in the game. |
+| `RUTO_SQUIRMS` | Carried in Jabu-Jabu's belly, Ruto gets impatient (this release's fidget and line) when Link stands still for a few seconds, not only after minutes in one room. Not yet seen in the game. |
 
 The tab's own texts are in the menu's four languages; a restoration's name and description are English.
 
