@@ -15,6 +15,7 @@ a restoration is a list of edits, and the game applies them once at start to the
 | `IRON_KNUCKLE_AXE` | An Iron Knuckle's axe hurts Link through his shield, as it did in the original. Not yet seen in the game. |
 | `LOST_WOODS_BY_EAR` | The Lost Woods without the floating notes and the trails of mist: Saria's song alone shows the way. Not yet seen in the game. |
 | `NAVI_DARK_LINK` | Navi's hint at Dark Link in the Water Temple: "Dark Link" and "Conquer yourself!" (English; in Japanese the original's ダークリンク, 自分自身に打ち勝つのよ！！). The German and French texts keep this release's lines: the original's wording in those languages is not known to us. Not yet seen in the game. |
+| `WALLMASTER_NO_BEAM` | A Wallmaster's coming drop is not lit by a column of purple light that grows above Link. The coloured ring it draws on the floor stays, and no shadow of the hand shows: neither is in a file the restorations can change. |
 
 The tab's own texts are in the menu's four languages; a restoration's name and description are English.
 
