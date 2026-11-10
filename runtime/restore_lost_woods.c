@@ -1,0 +1,76 @@
+// Restoration: the Lost Woods without the guide to the Sacred Forest Meadow. The original leads the way by ear: Saria's
+// song is louder through the right exits. This release adds a guide on top of the music: in each of the child's and the
+// adult's placement files, 8 floating notes (EftLoc_LostForest_SongOfSaria, 1.75 above the ground) and 19 trails of
+// mist (EftLoc_LostForest_DryIceHint_00 / _01, whose effect emits Env_LostForest_DryIcePath, on the ground at the same
+// exits). Both appear only with the BoolExp DoorOfTime_IsAfter_Ready_Exp, which gates nothing else in these files, so
+// they are one hint: this removes all 54 and nothing else.
+#include "restore.h"
+
+#define CHILD "Banc/LostWood/LostWood_Child_Dynamic.bcett.byml.zs"
+#define ADULT "Banc/LostWood/LostWood_Adult_Dynamic.bcett.byml.zs"
+#define NOTE(file, hash, x, y, z) RESTORE_REMOVE(file, "EftLoc_LostForest_SongOfSaria", hash, x, y, z)
+#define HINT0(file, hash, x, y, z) RESTORE_REMOVE(file, "EftLoc_LostForest_DryIceHint_00", hash, x, y, z)
+#define HINT1(file, hash, x, y, z) RESTORE_REMOVE(file, "EftLoc_LostForest_DryIceHint_01", hash, x, y, z)
+
+static const RestoreEdit edits[] = {
+    // LostWood_Child_Dynamic.bcett.byml.zs
+    NOTE(CHILD, 4466094125140400564ull, 12.0, 101.75, 0.0),
+    NOTE(CHILD, 5175501452933932896ull, 36.0, 101.75, -24.0),
+    NOTE(CHILD, 1928190262962357792ull, 36.0, 101.75, -72.0),
+    NOTE(CHILD, 15312023351959999767ull, 24.0, 101.75, -84.0),
+    NOTE(CHILD, 12223739162020957158ull, 48.0, 101.75, -60.0),
+    NOTE(CHILD, 15254276783194593237ull, 48.0, 101.75, -36.0),
+    NOTE(CHILD, 1845939025138126627ull, 24.0, 101.75, -12.0),
+    NOTE(CHILD, 5165134098296585229ull, 0.0, 101.75, 12.0),
+    HINT0(CHILD, 12568474794904984853ull, 23.93, 100.002, -12.149),
+    HINT0(CHILD, 6192201359289489535ull, 35.914, 100.002, -72.002),
+    HINT0(CHILD, 15136400516925484637ull, 36.2, 100.002, -23.661),
+    HINT0(CHILD, 17360173392036357446ull, 23.96, 100.002, -84.105),
+    HINT0(CHILD, 1945924911101707590ull, 11.917, 100.002, 0.083),
+    HINT0(CHILD, 2130393393311070755ull, 47.803, 100.002, -36.342),
+    HINT0(CHILD, 17783136213959250316ull, 47.803, 100.002, -59.863),
+    HINT1(CHILD, 13198564982985136618ull, 36.013, 100.044, -47.995),
+    HINT1(CHILD, 3236832170754088116ull, -0.132, 100.044, -13.832),
+    HINT1(CHILD, 4916133484570315286ull, 47.898, 100.044, -10.088),
+    HINT1(CHILD, 4716795816155239777ull, 10.11, 100.044, -72.019),
+    HINT1(CHILD, 8948235537938186166ull, 61.54, 100.044, -72.15),
+    HINT1(CHILD, 622449878218794974ull, 0.105, 100.044, 13.901),
+    HINT1(CHILD, 13493729568791817700ull, 10.223, 100.044, -23.921),
+    HINT1(CHILD, 4035126819416949606ull, 23.966, 100.044, 13.816),
+    HINT1(CHILD, 12651952573733341595ull, -12.168, 100.044, -0.208),
+    HINT1(CHILD, 6584618909456773646ull, 61.581, 100.044, -48.237),
+    HINT1(CHILD, 1311848489955191833ull, 24.035, 100.044, -58.076),
+    HINT1(CHILD, 17970247498456999224ull, 47.838, 100.044, -85.766),
+    // LostWood_Adult_Dynamic.bcett.byml.zs
+    NOTE(ADULT, 9830949755483775642ull, 12.0, 101.75, 0.0),
+    NOTE(ADULT, 1619132313080025050ull, 36.0, 101.75, -24.0),
+    NOTE(ADULT, 17682710894116803034ull, 36.0, 101.75, -72.0),
+    NOTE(ADULT, 12360738138099081965ull, 24.0, 101.75, -84.0),
+    NOTE(ADULT, 8756991526520116015ull, 48.0, 101.75, -60.0),
+    NOTE(ADULT, 12431760455485242510ull, 48.0, 101.75, -36.0),
+    NOTE(ADULT, 4946452561799448361ull, 24.0, 101.75, -12.0),
+    NOTE(ADULT, 2328875152071170503ull, 0.0, 101.75, 12.0),
+    HINT0(ADULT, 6914492112247748780ull, 23.93, 100.002, -12.149),
+    HINT0(ADULT, 1556639703206032641ull, 35.914, 100.002, -72.002),
+    HINT0(ADULT, 8314797531288565492ull, 36.2, 100.002, -23.661),
+    HINT0(ADULT, 13210980191440113692ull, 23.96, 100.002, -84.105),
+    HINT0(ADULT, 15149331033703723276ull, 11.917, 100.002, 0.083),
+    HINT0(ADULT, 12604125358988335741ull, 47.803, 100.002, -36.342),
+    HINT0(ADULT, 12060630517962566102ull, 47.803, 100.002, -59.863),
+    HINT1(ADULT, 5095632845625558352ull, 36.013, 100.044, -47.995),
+    HINT1(ADULT, 18417248509443541102ull, -0.132, 100.044, -13.832),
+    HINT1(ADULT, 1992401778592639936ull, 47.898, 100.044, -10.088),
+    HINT1(ADULT, 17071343982150437335ull, 10.11, 100.044, -72.019),
+    HINT1(ADULT, 3545960908403250716ull, 61.54, 100.044, -72.15),
+    HINT1(ADULT, 15366239154108985124ull, 0.105, 100.044, 13.901),
+    HINT1(ADULT, 5199465282074190190ull, 10.223, 100.044, -23.921),
+    HINT1(ADULT, 15522683324029525212ull, 23.966, 100.044, 13.816),
+    HINT1(ADULT, 6683123999017172269ull, -12.168, 100.044, -0.208),
+    HINT1(ADULT, 16772961775503313112ull, 61.581, 100.044, -48.237),
+    HINT1(ADULT, 15879326306709015247ull, 24.035, 100.044, -58.076),
+    HINT1(ADULT, 10303734611332652498ull, 47.838, 100.044, -85.766),
+};
+
+RESTORATION(lost_woods, "LOST_WOODS_BY_EAR", "Lost Woods by ear",
+            "No floating notes or trails of mist in the Lost Woods: Saria's song alone shows the way, as in the original.",
+            edits);

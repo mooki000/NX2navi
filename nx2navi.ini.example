@@ -649,6 +649,12 @@
 # restore_talon_door = 0
 # A green rupee at the top of each drawbridge chain in front of the castle town, for a child who climbs it.
 # restore_drawbridge_rupees = 0
+# A bomb flower at the foot of the Shadow Temple's tower: shoot it with an arrow to bring the tower down.
+# restore_shadow_bomb_flower = 0
+# An Iron Knuckle's axe hurts Link through his shield, as it did in the original.
+# restore_iron_knuckle_axe = 0
+# The Lost Woods without the floating notes and trails of mist that show the way: Saria's song alone guides you.
+# restore_lost_woods_by_ear = 0
 
 [diagnostics]
 # Extra lines in the log, comma separated: svc, host, ipc, fs, gfx, perf, sched, audio, present or all. The menu's
