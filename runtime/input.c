@@ -12,6 +12,7 @@
 #include <string.h>
 #include <SDL3/SDL.h>
 
+#include "autopilot.h"
 #include "cfg.h"
 #include "host.h"
 #include "input.h"
@@ -79,6 +80,12 @@ static int script_n, script_state;   // 0 not loaded, 1 loaded
 static int script_mixed;             // the script has timed lines: its untimed ones end where the world clock starts
 static int32_t script_mouse[2];      // one-shot raw counts, consumed by the camera hook; under lock
 
+int input_script_button(const char *name) {
+    for (size_t i = 0; i < sizeof script_buttons / sizeof *script_buttons; i++)
+        if (!strcmp(name, script_buttons[i].name)) return script_buttons[i].bit;
+    return -1;
+}
+
 static void script_load(void) {
     script_state = 1;
     const char *path = cfg_get("NX2NAVI_INPUT_SCRIPT");
@@ -108,8 +115,7 @@ static void script_load(void) {
             if (n >= 3 && c > 0) e.hold = (uint64_t)(c * unit + 0.5);
             snprintf(e.text, sizeof e.text, "%s %d %d", name, e.x, e.y);
         } else {
-            for (size_t i = 0; i < sizeof script_buttons / sizeof *script_buttons; i++)
-                if (!strcmp(name, script_buttons[i].name)) e.bit = script_buttons[i].bit;
+            e.bit = input_script_button(name);
             if (e.bit < 0) { rt_log("input: script line %d: unknown button %s", ln, name); continue; }
             if (sscanf(line + off, "%lf", &c) == 1 && c > 0) e.hold = (uint64_t)(c * unit + 0.5);
             snprintf(e.text, sizeof e.text, "%s", name);
@@ -965,6 +971,7 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
         else if (kbm_used) __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
     }
     script_apply(&b, sl, sr);
+    autopilot_input(&b, sl, sr);   // NX2NAVI_AUTOPILOT (test): a route steered from Link's position (autopilot.c)
     rec_apply(b, sl, sr);
     // Minus and Plus held together (gamepad or keys) open or close the menu and never reach the game
     static int combo_held;
