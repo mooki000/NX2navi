@@ -646,8 +646,9 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_GAME_RES_DESC] = "Height of the game's picture. Higher is sharper but costs more GPU power.",
     [UI_MENU_GAME_RES_NATIVE] = "Native",
     [UI_MENU_TAB_RESTORE] = "Restorations",
-    [UI_MENU_RESTORE_INTRO] = "Things the original game did that this release changed, each on its own. A change "
-                              "takes effect when the game starts next.",
+    [UI_MENU_RESTORE_INTRO] = "Things the original game did that this release changed, each on its own. A change to "
+                              "one that edits the game's files takes effect when the game starts next; the others "
+                              "follow it at once.",
     [UI_MENU_RESTORE_APPLIED] = "in use (edits applied: %d)",
     [UI_MENU_RESTORE_PARTLY] = "in use (edits applied: %d of %d, see the log)",
     [UI_MENU_RESTORE_NONE] = "not in use: its game files differ, see the log",
@@ -1239,7 +1240,8 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_BOOT_RESUME_TITLE] = "Перезапуск", [UI_BOOT_RESUME] = "Через мгновение вы вернётесь туда, где были",
     [UI_MENU_TAB_RESTORE] = "Восстановления",
     [UI_MENU_RESTORE_INTRO] = "То, что было в оригинальной игре и изменено в этом издании, — каждое по отдельности. "
-                              "Изменение вступает в силу при следующем запуске игры.",
+                              "Изменение тех, что правят файлы игры, вступает в силу при следующем запуске игры; "
+                              "остальные следуют ему сразу.",
     [UI_MENU_RESTORE_APPLIED] = "используется (применено правок: %d)",
     [UI_MENU_RESTORE_PARTLY] = "используется (применено правок: %d из %d, см. журнал)",
     [UI_MENU_RESTORE_NONE] = "не используется: файлы игры отличаются, см. журнал",
@@ -1854,7 +1856,8 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_BOOT_RESUME_TITLE] = "Reiniciando", [UI_BOOT_RESUME] = "Você volta para onde estava em instantes",
     [UI_MENU_TAB_RESTORE] = "Restaurações",
     [UI_MENU_RESTORE_INTRO] = "Coisas que o jogo original fazia e que esta versão mudou, cada uma por si. Uma mudança "
-                              "vale a partir da próxima vez que o jogo iniciar.",
+                              "nas que editam os arquivos do jogo vale a partir da próxima vez que o jogo iniciar; as "
+                              "outras a seguem na hora.",
     [UI_MENU_RESTORE_APPLIED] = "em uso (edições aplicadas: %d)",
     [UI_MENU_RESTORE_PARTLY] = "em uso (edições aplicadas: %d de %d, veja o log)",
     [UI_MENU_RESTORE_NONE] = "fora de uso: os arquivos do jogo são diferentes, veja o log",
@@ -2546,7 +2549,8 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_BOOT_STARTING] = "正在启动", [UI_BOOT_SHADERS] = "着色器：%lld / %lld", [UI_BOOT_PIPELINES] = "管线：%lld / %lld",
     [UI_BOOT_RESUME_TITLE] = "正在重启", [UI_BOOT_RESUME] = "马上回到你刚才的位置",
     [UI_MENU_TAB_RESTORE] = "原版还原",
-    [UI_MENU_RESTORE_INTRO] = "原版游戏中有、而此版本改动了的内容，每项可单独开关。更改在下次启动游戏时生效。",
+    [UI_MENU_RESTORE_INTRO] = "原版游戏中有、而此版本改动了的内容，每项可单独开关。修改游戏文件的项目在下次启动游戏时生效；"
+                              "其余项目的更改立即生效。",
     [UI_MENU_RESTORE_APPLIED] = "使用中（已应用 %d 处修改）",
     [UI_MENU_RESTORE_PARTLY] = "使用中（已应用 %d / %d 处修改，见日志）",
     [UI_MENU_RESTORE_NONE] = "未使用：游戏文件不同，见日志",

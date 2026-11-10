@@ -95,6 +95,13 @@ void restore_set(const Restoration *r, int on) {
     cfg_set(var, on ? "1" : "0");
 }
 
+int restore_key_on(const char *key) {
+    ensure();
+    for (int i = 0; i < nlist; i++)
+        if (!strcmp(list[i]->key, key)) return restore_on(list[i]);
+    return 0;
+}
+
 static int index_of(const Restoration *r) {
     ensure();
     for (int i = 0; i < nlist; i++)
@@ -254,7 +261,8 @@ int restore_probe(void) {
            edits);
     int skipped = run(1, romfs_read_served, NULL);
     for (int i = 0; i < nlist; i++)
-        printf("%s (%s): %d of %d edits applied\n", list[i]->key, list[i]->name, started_applied[i], list[i]->nedits);
+        if (list[i]->code) printf("%s (%s): code, no file edits\n", list[i]->key, list[i]->name);
+        else printf("%s (%s): %d of %d edits applied\n", list[i]->key, list[i]->name, started_applied[i], list[i]->nedits);
     printf("probe-restore: %s (%d of %d edits skipped)\n", skipped ? "FAILED" : "passed", skipped, edits);
     return skipped ? 1 : 0;
 }

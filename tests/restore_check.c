@@ -629,6 +629,7 @@ static const RestoreEdit t_missing[] = {RESTORE_SET("test/missing.bcett.byml", "
 RESTORATION(t_place, "TEST_PLACE", "Place", "Two edits of the placement.", t_place);
 RESTORATION(t_pack, "TEST_PACK", "Pack", "An edit of a pack member.", t_pack);
 RESTORATION(t_missing, "TEST_MISSING", "Missing", "An edit of a file the RomFS lacks.", t_missing);
+RESTORATION_CODE(t_code, "TEST_CODE", "Code", "Code, no file edits.");
 
 static struct { char name[64], value[8]; } settings[8];
 static int nsettings, logged, reads, serves, serve_fails;
@@ -710,9 +711,17 @@ static const Restoration *by_key(const char *key) {
 
 static void switches(void) {
     printf("switches\n");
-    CHECK(restore_count() == 3 && !strcmp(restore_at(0)->key, "TEST_MISSING") &&
-              !strcmp(restore_at(2)->key, "TEST_PLACE") && !restore_at(3),
-          "the registry: %d restorations, not the three sorted by key", restore_count());
+    CHECK(restore_count() == 4 && !strcmp(restore_at(0)->key, "TEST_CODE") &&
+              !strcmp(restore_at(3)->key, "TEST_PLACE") && !restore_at(4),
+          "the registry: %d restorations, not the four sorted by key", restore_count());
+    // A code restoration: the switch by its key, read at each call; no edits, nothing counted at start.
+    const Restoration *code = by_key("TEST_CODE");
+    CHECK(code && code->code && !code->nedits && !restore_key_on("TEST_CODE") && !restore_key_on("TEST_NONE"),
+          "TEST_CODE: not a code restoration, or on before its switch");
+    cfg_set("NX2NAVI_RESTORE_TEST_CODE", "1");
+    CHECK(restore_key_on("TEST_CODE"), "TEST_CODE: restore_key_on does not follow its switch");
+    cfg_set("NX2NAVI_RESTORE_TEST_CODE", "0");
+    CHECK(!restore_key_on("TEST_CODE"), "TEST_CODE: restore_key_on does not follow its switch off");
     const Restoration *place = by_key("TEST_PLACE"), *pk = by_key("TEST_PACK"), *missing = by_key("TEST_MISSING");
     if (!place || !pk || !missing) return;
     int a, s;

@@ -2,8 +2,9 @@
 
 A restoration brings back something the original game did that this release changed. Each one has its own switch,
 `restore_<key> = 1` in `nx2navi.ini` `[restorations]` (`NX2NAVI_RESTORE_<KEY>`) or its row on the *Restorations* tab of
-the menu (F1). All are off by default, and a switch takes effect at the next start. No game file ships with the port:
-a restoration is a list of edits, and the game applies them once at start to the player's own files.
+the menu (F1). All are off by default. A switch of one that edits files takes effect at the next start; one that is
+code (see the end of this page) follows its switch while the game runs. No game file ships with the port: a
+restoration that edits files is a list of edits, and the game applies them once at start to the player's own files.
 
 | Key | What it restores |
 |---|---|
@@ -141,6 +142,11 @@ RESTORATION(name, "KEY", "Menu label", "One-line description for the menu.", edi
   rest of the file keeps its bytes. `python tests/restore_check.py --game <game copy>` reads every graph of the
   player's files and writes it back (unchanged, and with a node added) to check the reader and writer.
 - Run `--probe-restore` on a game build: every edit of the new restoration should say what it did.
+
+A restoration that is code rather than file edits (a camera, a move of Link's) is declared with
+`RESTORATION_CODE(name, "KEY", "Menu label", "One-line description.");` in the file that implements it. It gets the
+same switch and menu row; its code asks `restore_key_on("KEY")` and follows the switch while the game runs, and
+`--probe-restore` lists it as code.
 
 Not yet possible: removing a key or a pack member, adding dicts or array items, removing graph nodes or changing a
 node's children, adding blackboard entries, editing binary files (models, textures, collision).

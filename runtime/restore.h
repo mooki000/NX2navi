@@ -78,6 +78,7 @@ typedef struct {
     const char *desc;    // the menu's one-line description
     const RestoreEdit *edits;
     int nedits;
+    int code;            // 1: the behaviour is code, not file edits (RESTORATION_CODE): the switch acts while the game runs
 } Restoration;
 
 #define RESTORE_OBJ_(f, g, h, x, y, z) .file = f, .gyaml = g, .hash = h, .at = {x, y, z}
@@ -153,7 +154,12 @@ typedef struct {
 #define RESTORE_SECTION section("nx2navi_rst")
 #endif
 #define RESTORATION(id, key, name, desc, edits)                                                                   \
-    static const Restoration restore_##id = {key, name, desc, edits, (int)(sizeof edits / sizeof *edits)};         \
+    static const Restoration restore_##id = {key, name, desc, edits, (int)(sizeof edits / sizeof *edits), 0};      \
+    __attribute__((used, RESTORE_SECTION)) static const Restoration *const restore_entry_##id = &restore_##id
+// A restoration that is code rather than file edits (a camera, a move of Link's): the same switch and menu row, no
+// edits. Its code asks restore_key_on(key) and follows the switch while the game runs.
+#define RESTORATION_CODE(id, key, name, desc)                                                                     \
+    static const Restoration restore_##id = {key, name, desc, NULL, 0, 1};                                         \
     __attribute__((used, RESTORE_SECTION)) static const Restoration *const restore_entry_##id = &restore_##id
 
 // The declared restorations, sorted by key; NULL past the end.
@@ -162,6 +168,9 @@ const Restoration *restore_at(int i);
 // 1 when its setting is on (NX2NAVI_RESTORE_<key> set and not "0"); restore_set writes it (the menu).
 int restore_on(const Restoration *r);
 void restore_set(const Restoration *r, int on);
+// The same by key ("FIRST_PERSON"): 0 when no restoration with that key is declared. It reads the setting on every
+// call: per-frame code keeps the answer and asks again when cfg_version moves.
+int restore_key_on(const char *key);
 // The edits of r this start applied and skipped; both 0 when it was off at start, or before the start applied them.
 // Any thread.
 void restore_started(const Restoration *r, int *applied, int *skipped);

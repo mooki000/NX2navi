@@ -1,6 +1,7 @@
 // The Restorations tab of the in-game menu (restore.h): a line on what they are, then an on/off row per declared
 // restoration with its one-line description; the description pane adds what this start did with it. The edits apply
-// at start (romfs.c overlay_init), so a switch takes effect at the next one.
+// at start (romfs.c overlay_init), so a switch of one that edits files takes effect at the next one; one that is code
+// (RESTORATION_CODE) follows its switch while the game runs.
 #include <stdio.h>
 
 #include "imgui.h"
@@ -20,7 +21,8 @@ extern "C" void tab_restore(float scale) {
         int applied, skipped;
         restore_started(r, &applied, &skipped);
         bool on = restore_on(r) != 0, started = applied + skipped > 0;
-        if (on != started) snprintf(state, sizeof state, "%s", menu_text(UI_MENU_AFTER_RESTART));
+        if (r->code) state[0] = 0;   // code follows the switch while the game runs: nothing to report from the start
+        else if (on != started) snprintf(state, sizeof state, "%s", menu_text(UI_MENU_AFTER_RESTART));
         else if (!on) state[0] = 0;
         else if (!skipped) snprintf(state, sizeof state, menu_text(UI_MENU_RESTORE_APPLIED), applied);
         else if (applied) snprintf(state, sizeof state, menu_text(UI_MENU_RESTORE_PARTLY), applied, applied + skipped);
