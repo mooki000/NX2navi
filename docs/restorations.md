@@ -22,6 +22,7 @@ restoration that edits files is a list of edits, and the game applies them once 
 | `AUTO_HOP` | Link jumps by himself when he runs off a ledge (faster than 3 m/s); walking off one still drops him. Code: `runtime/restore_ledge.c`. |
 | `LEDGE_DIVE` | A jump off a ledge at least 5 m above deep water (2 m deep or more) is a dive into it. Code: `runtime/restore_ledge.c`. |
 | `FIRST_PERSON` | The first-person look: L3 held on the ground shows the view from Link's eyes, the stick turns it. Code, not edits (below). |
+| `DRAWBRIDGE_NIGHT` | The drawbridge to the castle town is raised from 18:00 to 6:30 while Link is a child, and comes down at daybreak. Code (`runtime/restore_drawbridge.c`), not edits: it follows its switch while the game runs. Not yet seen in the game: the bridge's flag was seen raised at night and lowered at daybreak and with the switch off, but not the raised bridge itself in Hyrule Field at night. |
 
 The tab's own texts are in the menu's four languages; a restoration's name and description are English.
 

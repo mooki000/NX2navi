@@ -672,6 +672,9 @@
 # the view; letting go returns to the camera behind him. Code, like the two above: it acts while the game runs, also
 # when switched on or off in the menu.
 # restore_first_person = 0
+# The drawbridge to the castle town is raised from 18:00 to 6:30 while Link is a child. Code: the switch acts at
+# once.
+# restore_drawbridge_night = 0
 
 [diagnostics]
 # Extra lines in the log, comma separated: svc, host, ipc, fs, gfx, perf, sched, audio, present or all. The menu's
