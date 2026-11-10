@@ -9,6 +9,8 @@ a restoration is a list of edits, and the game applies them once at start to the
 |---|---|
 | `WOLFOS_AMBUSH` | The two Wolfos in the Forest Temple's first room appear when Link is about 4 m away, not 12 m. |
 | `FIRE_TRIAL_SINKING` | The long sinking platform of the Fire Trial in Ganon's Castle sinks at the original's pace, about 1.6 times as fast. |
+| `TALON_DOOR` | The service door behind Hyrule Castle where Talon delivers milk: a town door that does not open, in front of the window where the path ends. |
+| `DRAWBRIDGE_RUPEES` | A green rupee at the top of each drawbridge chain in front of the castle town, for a child who climbs it. |
 
 The tab's own texts are in the menu's four languages; a restoration's name and description are English.
 
