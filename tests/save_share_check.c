@@ -63,6 +63,7 @@ NEVER(romfs_overlay_count) NEVER(romfs_read) NEVER(romfs_size) NEVER(rt_call)
 int romfs_owns(const char *path) { (void)path; return 0; }
 void fs_trace(const char *what, const char *path) { (void)what, (void)path; }
 void resume_save_file(const char *path, int write) { (void)path, (void)write; }   // resume.c: restart in place
+void voice_lang_options_opened(void) {}
 
 int main(int argc, char **argv) {
     if (argc < 3) return 2;

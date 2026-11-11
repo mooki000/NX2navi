@@ -12,7 +12,8 @@
 // one swapchain shot per tab into NX2NAVI_MENU_TEST_DIR; NX2NAVI_MENU_TEST_SET=<frame>:<key>=<value>[,...][;...] sets settings
 // at given frames without input (SAVE=1 writes nx2navi.ini, FOCUS=<key> puts the cursor on that setting's row,
 // RESTART=1 opens the menu and the Restart confirmation, CONFIRM=1 presses its Restart button and CANCEL=1 its Cancel,
-// CLOSE=1 closes the menu as F1 does).
+// CLOSE=1 closes the menu as F1 does, VOICE_LANG=<Switch language code> makes the Voice language row's change of the
+// game's own option).
 //
 // Threads: the event functions are called by the window thread, menu_toggle by whichever thread polls the pad, the
 // overlay functions by the present path under its lock. ImGui itself runs on the present path only.
