@@ -20,9 +20,9 @@ restoration that edits files is a list of edits, and the game applies them once 
 | `STALFOS_PAIR` | In the Forest Temple, a Stalfos of a pair that falls gets up again 10 s later unless its partner falls too. It comes back dropping in, as this release brings Stalfos in: the original's pile of bones has no model or animation in this release. Not yet seen in the game. |
 | `RUTO_SQUIRMS` | Carried in Jabu-Jabu's belly, Ruto gets impatient (this release's fidget and line) when Link stands still for a few seconds, not only after minutes in one room. Not yet seen in the game. |
 | `AUTO_HOP` | Link jumps by himself when he runs off a ledge (faster than 3 m/s); walking off one still drops him. Code: `runtime/restore_ledge.c`. |
-| `LEDGE_DIVE` | A jump off a ledge at least 5 m above deep water (2 m deep or more) is a dive into it. Code: `runtime/restore_ledge.c`. |
+| `LEDGE_DIVE` | Running or jumping off a ledge at least 5 m above deep water (2 m deep or more) is a dive into it, as the original's jump off such a ledge was; running off one (faster than 3 m/s) dives with `AUTO_HOP` off too. Code: `runtime/restore_ledge.c`. |
 | `FIRST_PERSON` | The first-person look: L3 held on the ground shows the view from Link's eyes, the stick turns it. Code, not edits (below). |
-| `DRAWBRIDGE_NIGHT` | The drawbridge to the castle town is raised from 18:00 to 6:30 while Link is a child, and comes down at daybreak. Code (`runtime/restore_drawbridge.c`), not edits: it follows its switch while the game runs. Not yet seen in the game: the bridge's flag was seen raised at night and lowered at daybreak and with the switch off, but not the raised bridge itself in Hyrule Field at night. |
+| `DRAWBRIDGE_NIGHT` | The drawbridge to the castle town is raised from 18:00 to 6:30 while Link is a child, and comes down at daybreak. Code (`runtime/restore_drawbridge.c`), not edits: it follows its switch while the game runs, by the game's clock as it stands once play has begun (while a save loads, the clock still reads the title screen's time). Not yet seen in the game: the bridge's flag was seen raised at night and lowered at daybreak and with the switch off, but not the raised bridge itself in Hyrule Field at night. |
 
 The tab's own texts are in the menu's four languages; a restoration's name and description are English.
 
@@ -89,7 +89,8 @@ stood still, and letting go returned to the camera behind him. The remake has no
 - **The view**: Link's eyes (0.98 m above his feet as a child, 1.49 m as an adult), first where he faces. The right
   stick turns it, the mouse too where the mouse moves the camera: up to 150 degrees a second across and 100 up and
   down, from 60 degrees down to 70 up. It blends in over 0.15 s and back to the game's camera, which kept running,
-  over 0.3 s. Link's model is hidden while the view is near his head; the near plane is 0.2 m.
+  over 0.3 s. Link's model is hidden while the view is near his head, and so is Navi's, who hovers beside it; the near
+  plane is 0.2 m.
 - **The game** keeps running: enemies, Navi and the HUD go on. While the view is on the game gets only Plus (its menu)
   and Minus (the map): Link stands, and the item buttons, the sword, A and targeting do nothing, as in the original,
   where the look was for looking (the log names the buttons it kept from the game).
