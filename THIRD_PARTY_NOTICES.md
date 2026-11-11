@@ -107,6 +107,36 @@ folder's `licenses/` and in each component's own folder.
 | Weeping of the Empire menu cursor: eui's focus box read through ScreenMgr, BoxCursorMgr and the screens' node lists, AnimButton's hit test, the stale-hit-pane fallback to the parts panes, the three writes of moveBoxCursor, the structure offsets (1.0.0; the ScreenMgr instance placed in 1.4.3 by us) | https://github.com/daniel-madrid-07/weeping-of-the-empire @ `df0586cdc5702ca19bbebfa59697e0b6980f6237` (`engine/runtime/nx2navi_menu_cursor.cpp`), Copyright (c) 2026 daniel-madrid-07 | MIT | `runtime/menu_cursor.c` |
 | AMD FidelityFX API headers (FSR 3.1 upscaling and frame generation) and its signed Vulkan library | https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK @ `v1.1.4` (`ffx-api/include/ffx_api/`, `PrebuiltSignedDLL/amd_fidelityfx_vk.dll`), Copyright (C) 2024 Advanced Micro Devices, Inc. | MIT | `runtime/third_party/ffx_api/` (unmodified, with `LICENSE.txt`), used by `runtime/vk_ffx.cpp`; the library ships in the build kit's `bin/` and beside the built game (never in this repository) |
 
+## Distributed in the Linux build kit AppImage
+
+`tools/make_appimage.py --toolchain` puts the toolchain that `tools/linux_toolchain.py` assembles into the AppImage's
+`usr/kit/llvm/`; without that switch the AppImage carries none of this section. Versions and sha256 of every download
+are pinned in those two scripts and in `tools/make_release_linux.py`. The licence texts, with the full LGPL-2.1, GPL-2,
+GPL-3 and Apache-2.0 texts the Debian `copyright` files refer to, are in `usr/kit/llvm/licenses/`, and
+`licenses/SOURCES.txt` says where the corresponding source of the LGPL and GPL object code is. meson 1.12.1, nasm 3.02
+and CMake 4.4.5 build dav1d and SDL there and are not distributed. The game built with the toolchain links SDL3, Opus,
+libvpx, dav1d, zstd, libstdc++ and libatomic statically; it is built on the player's PC and never distributed.
+
+The SDK parts below come from the Steam Runtime 3 "sniper" SDK sysroot 3.0.20261021.266025 (Debian 11 based,
+https://repo.steampowered.com/steamrt-images-sniper/snapshots/3.0.20261021.266025/), whose `sources/` folder holds the
+source package of each. Its headers are taken by the file lists of `libc6-dev`, `linux-libc-dev`, `libstdc++-10-dev`,
+`libopus-dev` and `libvpx-dev` only.
+
+| Component | Source | License | Where in the AppImage |
+|---|---|---|---|
+| LLVM 23.1.4 official Linux X64 release: `clang`, `lld` and the clang resource headers; `llvm-LICENSE.txt` from the `llvmorg-23.1.4` source tag | https://github.com/llvm/llvm-project/releases/tag/llvmorg-23.1.4 | Apache-2.0 with LLVM exception | `usr/kit/llvm/bin/`, `usr/kit/llvm/lib/clang/` |
+| glibc 2.31-13+deb11u14 (SDK packages `libc6`, `libc6-dev`): headers, shared objects, `libc_nonshared.a` and the other link libraries, `crt*.o`; `glibc-copyright.txt` | source package `glibc_2.31-13+deb11u14.dsc` in the snapshot's `sources/` folder | LGPL-2.1-or-later (some parts under other free licences, as the copyright file lists) | `usr/kit/llvm/sysroot/` |
+| GCC 10 runtime 10.3.0-3+steamrt3.1 (SDK packages `libstdc++-10-dev`, `libgcc-10-dev`, `libgcc-s1`, `libatomic1`): the C++ headers, `libstdc++.a`, `libsupc++.a`, `libgcc.a`, `libgcc_eh.a`, `libgcc_s.so.1`, `libatomic.a`, `crtbegin*.o`, `crtend*.o`; `libstdc++-libgcc-libatomic-copyright.txt` | source package `gcc-10_10.3.0-3+steamrt3.1.dsc` in the snapshot's `sources/` folder | GPL-3.0-or-later with the GCC Runtime Library Exception 3.1 | `usr/kit/llvm/sysroot/` |
+| Linux 5.10 userspace headers (SDK package `linux-libc-dev` 5.10.262-1); `linux-kernel-headers-copyright.txt` | source package `linux_5.10.262-1.dsc` in the snapshot's `sources/` folder (the headers are source themselves) | GPL-2.0 WITH Linux-syscall-note | `usr/kit/llvm/sysroot/usr/include/` |
+| libopus 1.3.1 (`libopus-dev`): `libopus.a` and its headers; `opus-copyright.txt` | source package `opus_1.3.1-0.1.dsc` in the snapshot's `sources/` folder | BSD-3-Clause | `usr/kit/llvm/sysroot/` |
+| libvpx 1.9.0 (`libvpx-dev`): `libvpx.a` and its headers; `libvpx-copyright.txt`, and `libvpx-PATENTS.txt` from the v1.17.0 source tag (Debian's copyright file carries no patent grant) | source package `libvpx_1.9.0-1+deb11u5.dsc` in the snapshot's `sources/` folder | BSD-3-Clause with the WebM patent grant | `usr/kit/llvm/sysroot/` |
+| Vulkan loader 1.4.309 (`libvulkan1`): `libvulkan.so.1.4.309` and its links, which the link reads (the game loads the driver's loader); `vulkan-loader-copyright.txt` | source package `vulkan-loader_1.4.309.0-1~steamrt3.1.dsc` in the snapshot's `sources/` folder | Apache-2.0 | `usr/kit/llvm/sysroot/usr/lib/x86_64-linux-gnu/` |
+| Vulkan-Headers 1.4.363 (source tag), the C headers | https://github.com/KhronosGroup/Vulkan-Headers/tree/v1.4.363 | Apache-2.0 OR MIT | `usr/kit/llvm/sysroot/usr/local/include/` |
+| Zstandard 1.5.7, built from the release tarball into a static `libzstd.a` | https://github.com/facebook/zstd/releases/tag/v1.5.7 | BSD-3-Clause | `usr/kit/llvm/sysroot/usr/local/` |
+| dav1d 1.5.4, built from the release tarball into a static `libdav1d.a` with its assembly | https://downloads.videolan.org/pub/videolan/dav1d/1.5.4/ | BSD-2-Clause | `usr/kit/llvm/sysroot/usr/local/` |
+| SDL 3.4.18, built from the release tarball into a static `libSDL3.a` that loads the window, sound and input libraries (X11, Wayland, libdecor, ALSA, PulseAudio, PipeWire, D-Bus, libudev) when the game starts | https://github.com/libsdl-org/SDL/releases/tag/release-3.4.18 | zlib | `usr/kit/llvm/sysroot/usr/local/` |
+| wayland 1.24.0 client headers, compiled into SDL's Wayland code (not shipped as files) | https://gitlab.freedesktop.org/wayland/wayland/-/releases/1.24.0 | MIT | inside `libSDL3.a`; `licenses/wayland-COPYING.txt` |
+
 ## Distributed in the launcher release
 
 `tools/make_launcher.py` assembles these into `NX2navi-Setup-<version>.exe` and the update archives of
