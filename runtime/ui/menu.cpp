@@ -36,6 +36,7 @@ static int g_font_bad;
 #pragma clang diagnostic pop
 #include "ui/amiibo_page.h"
 #include "ui/binds_page.h"
+#include "ui/saves_page.h"
 #include "ui/option_rows.h"
 #include "ui/perf_panel.h"
 
@@ -142,7 +143,7 @@ extern "C" void menu_toggle(void) {
 }
 
 // ---- events from the window adapter, queued while the menu is open; the present path hands them to ImGui
-enum { EV_KEY, EV_POS, EV_BUTTON, EV_WHEEL, EV_FOCUS, EV_MAX = 256 };
+enum { EV_KEY, EV_POS, EV_BUTTON, EV_WHEEL, EV_FOCUS, EV_CHAR, EV_MAX = 256 };
 struct Ev { int type, a, b; float x, y; };
 static Ev ev_q[EV_MAX];
 
@@ -165,6 +166,7 @@ extern "C" void menu_event_mouse_pos(float x, float y) { push({EV_POS, 0, 0, x, 
 extern "C" void menu_event_mouse_button(int button, int down) { push({EV_BUTTON, button, down, 0, 0}); }
 extern "C" void menu_event_wheel(float dx, float dy) { push({EV_WHEEL, 0, 0, dx, dy}); }
 extern "C" void menu_event_focus(int focused) { push({EV_FOCUS, focused, 0, 0, 0}); }
+extern "C" void menu_event_char(unsigned c) { push({EV_CHAR, (int)c, 0, 0, 0}); }
 
 static void drain_events(ImGuiIO &io) {
     Ev q[EV_MAX];
@@ -186,6 +188,7 @@ static void drain_events(ImGuiIO &io) {
         case EV_BUTTON: io.AddMouseButtonEvent(e.a, e.b != 0); break;
         case EV_WHEEL: io.AddMouseWheelEvent(e.x, e.y); break;
         case EV_FOCUS: io.AddFocusEvent(e.a != 0); break;
+        case EV_CHAR: io.AddInputCharacter((unsigned)e.a); break;
         }
     }
 }
@@ -455,7 +458,7 @@ static int fonts_up(float scale) {
         // what the title face shows in the CJK languages: the menu's title and tabs (Simplified Chinese menu text) and
         // the boot screen's title (the game's language)
         static const UiTextId titles[] = {UI_MENU_TITLE, UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND,
-                                          UI_MENU_TAB_CONTROLS, UI_BOOT_TITLE};
+                                          UI_MENU_TAB_CONTROLS, UI_MENU_TAB_SAVES, UI_BOOT_TITLE};
         for (int i = 0; i < N; i++) {
             if (!data[i]) continue;
             ImFontGlyphRangesBuilder b;
@@ -526,8 +529,12 @@ extern "C" void menu_vk_release(void) {
 // open menu through menu_toggle, the call F1 and Minus+Plus make, without a key. RESTART=1 first takes
 // NX2NAVI_MENU_TEST_SET and NX2NAVI_INPUT_SCRIPT out of the environment, so the new process neither repeats the
 // changes and the restart nor replays the script of the first start. VOICE_LANG=<Switch language code> is the Voice
-// language row's change (row_voice_lang): the game's own option, no setting.
-enum { TAB_SCREEN, TAB_GAME, TAB_SOUND, TAB_CONTROLS, TAB_COUNT };   // Ocarina of Time: the options this port has
+// language row's change (row_voice_lang): the game's own option, no setting. KEY=<name> taps a key (up, down, left,
+// right, enter, escape or tab) and TYPE=<text> types text, into the page shown as the window's key and text events go
+// (test_key), also on the hook's own pages, which drop the window's events; so a run fills a text field and confirms it
+// as a keyboard does. SAVE_FILE_OPEN, SAVE_FILE_PAGE and SAVE_FILE_PLAY drive the Saves tab's file window
+// (ui/saves_page.h saves_test_set).
+enum { TAB_SCREEN, TAB_GAME, TAB_SAVES, TAB_SOUND, TAB_CONTROLS, TAB_COUNT };   // Ocarina of Time: the options this port has
 enum { TEST_PAGE_FRAMES = 30, TEST_SETS = 16 };
 struct TestSet { uint64_t frame; char key[64], value[64]; };
 static struct {
@@ -577,6 +584,30 @@ static void test_parse(void) {
                (unsigned long long)g_test.at, (unsigned long long)g_test.per_page, g_test.n_sets);
 }
 
+// The test hook's KEY and TYPE: into Dear ImGui as drain_events hands it the window's events. A key goes down and up in
+// the same frame, as a quick tap can arrive; ImGui takes the down this frame and the up the next.
+static void test_key(const char *key, const char *value) {
+    if (!g_ctx_ok) {   // before the menu's first frame there is nothing to take them
+        rt_log("menu: test hook: %s=%s before the menu was made; dropped", key, value);
+        return;
+    }
+    ImGuiIO &io = ImGui::GetIO();
+    if (!strcmp(key, "NX2NAVI_TYPE")) {
+        io.AddInputCharactersUTF8(value);
+        return;
+    }
+    static const struct { const char *name; ImGuiKey key; } keys[] = {
+        {"up", ImGuiKey_UpArrow}, {"down", ImGuiKey_DownArrow}, {"left", ImGuiKey_LeftArrow},
+        {"right", ImGuiKey_RightArrow}, {"enter", ImGuiKey_Enter}, {"escape", ImGuiKey_Escape}, {"tab", ImGuiKey_Tab}};
+    for (const auto &k : keys)
+        if (!strcmp(value, k.name)) {
+            io.AddKeyEvent(k.key, true);
+            io.AddKeyEvent(k.key, false);
+            return;
+        }
+    rt_log("menu: test hook: KEY=%s is no key the hook knows", value);
+}
+
 static void test_apply_sets(uint64_t frame) {
     for (; g_test.next_set < g_test.n_sets && g_test.sets[g_test.next_set].frame <= frame; g_test.next_set++) {
         const TestSet &t = g_test.sets[g_test.next_set];
@@ -600,7 +631,9 @@ static void test_apply_sets(uint64_t frame) {
             int i = voice_lang_index(t.value);
             if (i < 0) rt_log("menu: test hook: VOICE_LANG=%s is none of the nine voiced languages' codes", t.value);
             voice_lang_request(i);
-        } else {
+        } else if (!strcmp(t.key, "NX2NAVI_KEY") || !strcmp(t.key, "NX2NAVI_TYPE")) {
+            test_key(t.key, t.value);
+        } else if (!saves_test_set(t.key, t.value)) {
             cfg_set(t.key, t.value);
         }
     }
@@ -1142,12 +1175,12 @@ static void tab_screen(float scale) {
     opt_end();
 }
 
-// ---- the Game tab's Saves group (save_share.c). Export writes the save the game would load next into a zip in the
-// player's Downloads folder, for another player or, with this run's log and nx2navi.ini, a bug report. Import takes a
-// zip the player picks in the host's file dialog and leaves its save for the next start (fs_host.c import_pending): the
-// game holds its progress in memory and would write it back over a save replaced under it. The work runs off the
-// present thread (a thread of its own, or the dialog's); the rows wait greyed meanwhile, and the line under them says
-// what the last one did, else what an import did at this start.
+// ---- the Saves tab's Share a save group (save_share.c). Export writes the save the game would load next into a zip in
+// the player's Downloads folder, for another player or, with this run's log and nx2navi.ini, a bug report. Import takes
+// a zip the player picks in the host's file dialog and leaves its save for the next start, which makes it a save file
+// of its own (fs_host.c import_pending): the game holds its progress in memory and mounts its save once. The work runs
+// off the present thread (a thread of its own, or the dialog's); the rows wait greyed meanwhile, and the line under them
+// says what the last one did, else what an import did at this start.
 static PlatMutex g_share_lock = PLAT_MUTEX_INIT;
 static std::atomic<int> g_share_busy{0};
 static int g_share_text = -1;   // the last result's UiTextId, -1 none; a format that takes g_share_arg
@@ -1205,7 +1238,7 @@ static void rows_saves(void) {
     if (opt_button("##save_export", UI_MENU_SAVE_EXPORT, UI_MENU_SAVE_EXPORT_DESC)) start = 1;
     if (busy) opt_disable_next(UI_MENU_SAVE_BUSY);
     if (opt_button("##save_export_bug", UI_MENU_SAVE_EXPORT_BUG, UI_MENU_SAVE_EXPORT_BUG_DESC)) start = 2;
-    // a stat per frame while the Game tab shows; the launcher's own import drops a waiting one
+    // a stat per frame while the Saves tab shows; the launcher's own import drops a waiting one
     const bool waiting = save_share_pending() != 0;
     if (busy) opt_disable_next(UI_MENU_SAVE_BUSY);
     if (opt_button("##save_import", UI_MENU_SAVE_IMPORT, UI_MENU_SAVE_IMPORT_DESC,
@@ -1232,10 +1265,9 @@ static void rows_saves(void) {
     bool warn = g_share_warn;
     if (g_share_text >= 0) snprintf(line, sizeof line, menu_text((UiTextId)g_share_text), g_share_arg);
     plat_mutex_unlock(&g_share_lock);
-    const char *done = fs_save_import_done();
-    if (!line[0] && *done) {
-        if (!strcmp(done, "-")) snprintf(line, sizeof line, "%s", menu_text(UI_MENU_SAVE_IMPORTED_NEW));
-        else snprintf(line, sizeof line, menu_text(UI_MENU_SAVE_IMPORTED), done);
+    const int imported = fs_save_file_import();
+    if (!line[0] && imported) {
+        snprintf(line, sizeof line, menu_text(UI_MENU_SAVE_IMPORTED), imported);
         warn = false;
     }
     if (line[0]) opt_text_str(line, warn);
@@ -1251,8 +1283,16 @@ static void tab_game(float scale) {
     opt_toggle("NX2NAVI_ASSUME_FOCUS", UI_MENU_ASSUME_FOCUS, UI_MENU_ASSUME_FOCUS_DESC);
     // discord_rpc.c reads the setting on its own thread and connects or clears the status within half a second
     opt_toggle("NX2NAVI_DISCORD_RPC", UI_MENU_DISCORD_RPC, UI_MENU_DISCORD_RPC_DESC);
+    opt_end();
+}
+
+// The Saves tab: the save files (ui/saves_page.cpp), then sharing the one in use.
+static void tab_saves(float scale) {
+    opt_begin("##saves", scale);
+    saves_rows(scale);
     rows_saves();
     opt_end();
+    saves_after_page(scale);
 }
 
 static void tab_sound(float scale) {
@@ -1469,7 +1509,8 @@ static void tab_controls(float scale) {
     binds_after_page();
 }
 
-static const UiTextId kTabNames[TAB_COUNT] = {UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND, UI_MENU_TAB_CONTROLS};
+static const UiTextId kTabNames[TAB_COUNT] = {UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SAVES, UI_MENU_TAB_SOUND,
+                                              UI_MENU_TAB_CONTROLS};
 static int g_tab;               // the tab shown
 static int g_tab_request = -1;  // select this tab at the next layout; -1 none
 static int g_focus_page = -1;   // this tab's first row takes the cursor once it is shown; -1 none
@@ -1555,7 +1596,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
         ImGui::TextDisabled("%s", version);
     }
 
-    int step = g_modal || binds_modal()                                                                  ? 0
+    int step = g_modal || binds_modal() || saves_modal()                                                 ? 0
              : ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_E, false) ? 1
              : ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_Q, false) ? -1
                                                                                                          : 0;
@@ -1585,6 +1626,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
             switch (k) {
             case TAB_SCREEN: tab_screen(scale); break;
             case TAB_GAME: tab_game(scale); break;
+            case TAB_SAVES: tab_saves(scale); break;
             case TAB_SOUND: tab_sound(scale); break;
             case TAB_CONTROLS: tab_controls(scale); break;
             }
@@ -1628,7 +1670,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
     if (skin_widget_button(quit, ImVec2(bw, 0), scale)) g_confirm_quit = true, ImGui::OpenPopup("##confirm");
     restart_confirm(scale);
     menu_sounds_frame();
-    bool was_modal = g_modal || binds_modal();
+    bool was_modal = g_modal || binds_modal() || saves_modal();
     if (!was_modal && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)))
         set_open(0);
     ImGui::End();
@@ -1806,7 +1848,7 @@ static void resume_box(const MenuTarget *t, float scale) {
                     ui_text(UI_BOOT_RESUME), -1, s < 1 ? s : 2 - s, (float)t->width, (float)t->height, scale);
 }
 
-extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot) {
+static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot) {
     *shot = NULL;
     if (t->phys && t->phys != g_gpu_vendor_of) {   // the GPU's vendor for the rows that depend on it (dlss_offered)
         VkPhysicalDeviceProperties props;
@@ -1871,6 +1913,7 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
         io.ClearInputKeys();
         io.ClearInputMouse();
         binds_cancel();          // a cell waiting for a press when the menu closed: no press binds on the next opening
+        saves_cancel();          // a save file's window closes; the list is read again
         g_sound_fresh = true;
         g_last_ns = 0;
         g_focus_page = g_tab_request >= 0 ? g_tab_request : g_tab;   // opening: the first row has the cursor
@@ -1912,6 +1955,16 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
         }
     }
     return ImGui::GetDrawData()->TotalVtxCount > 0;
+}
+
+// A text field takes typing: the window delivers characters (and a handheld shows its keyboard) while one is active.
+// Every overlay frame lets the window follow, also those overlay_frame leaves early because the menu is closed: when
+// only the frames the menu laid out did, closing it with a field active (F1, Minus and Plus) left SDL's text input on,
+// and on Windows the input method attached to the game window, until the menu opened again.
+extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot) {
+    int r = overlay_frame(frame, t, shot);
+    menu_text_input_follow(g_ctx_ok && g_open.load(std::memory_order_relaxed) && ImGui::GetIO().WantTextInput);
+    return r;
 }
 
 // ---- the boot screen (boot.c's wait for the prewarm; gfx_present_boot presents it on a black frame)
