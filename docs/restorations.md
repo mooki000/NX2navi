@@ -89,7 +89,8 @@ stood still, and letting go returned to the camera behind him. The remake has no
 - **The view**: Link's eyes (0.98 m above his feet as a child, 1.49 m as an adult), first where he faces. The right
   stick turns it, the mouse too where the mouse moves the camera: up to 150 degrees a second across and 100 up and
   down, from 60 degrees down to 70 up. It blends in over 0.15 s and back to the game's camera, which kept running,
-  over 0.3 s. Link's model is hidden while the view is near his head; the near plane is 0.2 m.
+  over 0.3 s. Link's model is hidden while the view is near his head, and so is Navi's, who hovers beside it; the near
+  plane is 0.2 m.
 - **The game** keeps running: enemies, Navi and the HUD go on. While the view is on the game gets only Plus (its menu)
   and Minus (the map): Link stands, and the item buttons, the sword, A and targeting do nothing, as in the original,
   where the look was for looking (the log names the buttons it kept from the game).

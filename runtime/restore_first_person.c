@@ -34,7 +34,10 @@
 // where it would have been. Link's
 // model is hidden through its GameModelController (module slot +0x260): a bit of the hide byte +0xe4 of our own (the
 // game's OneShotGameModelControllerSetVisible uses bit 2; the model is drawn while the byte is 0) and the update bit
-// +0x120 bit 0, as the game sets them; the near plane goes to 0.2 m for what is not part of that model.
+// +0x120 bit 0, as the game sets them; the near plane goes to 0.2 m for what is not part of that model. Navi's model
+// is hidden the same way: she hovers about 0.4 m beside Link's head (her NaviParam WaitOffset), so in the view she was
+// a large glow beside the eye. She is the actor manager's actor named Npc_Navi, found as the game's own search for her
+// finds her.
 //
 // Off (the setting, NX2NAVI_RESTORE_FIRST_PERSON, read while the game runs), the patch set is off: the game runs its
 // own instructions at both sites. The setting going off while the view is on first lets the view blend out.
@@ -127,6 +130,11 @@ void first_person_input(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
 // 1.1.1 main
 #define GAME_GRAPHICS (MOD_MAIN_BASE + 0x4e3e258)   // the GameGraphics module (main+0x4c4a28 reads it the same way)
 #define ACTOR_TABLE (MOD_MAIN_BASE + 0x4e371d0)     // an actor table whose +0x480 has held the player
+// The actor manager: its actors on an intrusive list, the sentinel at +0x68 (first node at +0x70), each node at the
+// offset +0x7c gives within its actor, the next node at node +8; the game's own search for Navi (main+0x3290cd0)
+// walks it so
+#define ACTOR_MANAGER (MOD_MAIN_BASE + 0x4e90d90)
+enum { MGR_LIST = 0x68, MGR_FIRST = 0x70, MGR_NODE_OFFSET = 0x7c, NODE_NEXT = 8, MGR_WALK_MAX = 8192 };
 // The camera component (main+0x4c4120 apply, main+0x4c48c0 update)
 enum { CAM_OWNER = 0x10, RAW_EYE_F = 0x60, RAW_EYE = 0x70, RAW_TARGET_F = 0x88, RAW_TARGET = 0x98, RAW_NEAR = 0xbc,
        FINAL_EYE_F = 0xd8, RAW_FROM = 0x60, RAW_SIZE = 0x60 };
@@ -201,7 +209,10 @@ static const char *const why_text[] = {"", "the button was released", "the setti
 static struct {
     int state, armed, missed, adult;
     uint64_t comp, owner, comp_ns, last_ns, since_ns, player;
-    uint64_t model;   // the model controller that has our hide bit
+    uint64_t model;        // Link's model controller that has our hide bit
+    uint64_t navi;         // Navi's actor, looked for once a view (navi_sought)
+    uint64_t navi_model;   // her model controller that has our hide bit
+    int navi_sought;
     double t, yaw, pitch;
     uint8_t game[RAW_SIZE];   // the game's raw pose (from RAW_FROM: eye, target, up, near) when it last wrote one
     int have_game;
@@ -288,18 +299,52 @@ static int shown(uint64_t comp) {
     return 0;
 }
 
-// Link's model hidden (or shown again) through his model controller, as the game's own hide does. A controller that
-// is no longer his (another actor, another area) is let go of, never written.
-static void model_hide(int hide) {
-    uint64_t set = fp.player ? peek64(fp.player + ACTOR_COMPONENTS) : 0, mc = set ? peek64(set + SLOT_MODEL) : 0;
-    if (mc != fp.model) fp.model = 0;
-    if (!mc || (!hide && !fp.model)) return;
+// Navi: the actor named Npc_Navi on the actor manager's list, as the game's own search finds her; 0 when none is (an
+// area without her). The walk reads through peeks, so a list that changes under it ends the walk, never faults.
+static int is_navi(uint64_t actor) {
+    char name[24];
+    return actor && actor_name(actor, name, sizeof name) && !strcmp(name, "Npc_Navi");
+}
+static uint64_t navi_find(void) {
+    uint64_t mgr = peek64(ACTOR_MANAGER), end = mgr + MGR_LIST, node = mgr ? peek64(mgr + MGR_FIRST) : 0;
+    int32_t off = 0;
+    if (!node || !plat_mem_read(mgr + MGR_NODE_OFFSET, &off, 4)) return 0;
+    for (int i = 0; node && node != end && i < MGR_WALK_MAX; i++, node = peek64(node + NODE_NEXT))
+        if (is_navi(node - (uint64_t)(int64_t)off)) return node - (uint64_t)(int64_t)off;
+    return 0;
+}
+
+// A model hidden (or shown again) through its actor's model controller, as the game's own hide does; *kept is the
+// controller that has our bit. A controller that is no longer that actor's (another actor, another area) is let go
+// of, never written.
+static void controller_hide(uint64_t actor, uint64_t *kept, int hide) {
+    uint64_t set = actor ? peek64(actor + ACTOR_COMPONENTS) : 0, mc = set ? peek64(set + SLOT_MODEL) : 0;
+    if (mc != *kept) *kept = 0;
+    if (!mc || (!hide && !*kept)) return;
     uint8_t *b = (uint8_t *)(uintptr_t)(mc + MODEL_HIDE);
     uint8_t was = *b, now = hide ? was | HIDE_OURS : was & ~HIDE_OURS;
-    fp.model = hide ? mc : 0;
+    *kept = hide ? mc : 0;
     if (now == was) return;
     *b = now;
     if (!was != !now) __atomic_fetch_or((uint32_t *)(uintptr_t)(mc + MODEL_UPDATE), 1u, __ATOMIC_RELAXED);
+}
+
+// Link's model, and Navi's: she hovers beside his head, so in the view she would be a large glow beside the eye. She
+// is looked for once a view (navi_sought), and let go of when the actor kept is no longer hers.
+static void model_hide(int hide) {
+    controller_hide(fp.player, &fp.model, hide);
+    if (hide && !fp.navi_sought) {
+        static int told_missing;
+        fp.navi_sought = 1;
+        uint64_t was = fp.navi;
+        if (!is_navi(fp.navi)) fp.navi = navi_find();
+        uint64_t set = fp.navi ? peek64(fp.navi + ACTOR_COMPONENTS) : 0;
+        if (fp.navi ? fp.navi != was : !told_missing++)
+            rt_log("restore: FIRST_PERSON: Navi %s%#llx; her model controller %#llx", fp.navi ? "is " : "not found ",
+                   (unsigned long long)fp.navi, (unsigned long long)(set ? peek64(set + SLOT_MODEL) : 0));
+    }
+    if (hide && !is_navi(fp.navi)) fp.navi = 0;   // gone since: her controller is let go of without a write
+    controller_hide(fp.navi, &fp.navi_model, hide);
 }
 
 static void pose_write(uint64_t comp, V3 eye, V3 target, float near) {
@@ -417,7 +462,7 @@ static void step(uint64_t comp) {
                            fp.adult ? "adult" : "child", mode, eye.x, eye.y, eye.z, fp.yaw / DEG,
                            atan2(gd.x, gd.z) / DEG);
                 }
-                fp.state = IN, fp.missed = 0, fp.since_ns = now;
+                fp.state = IN, fp.missed = 0, fp.since_ns = now, fp.navi_sought = 0;
                 __atomic_store_n(&engaged, 1, __ATOMIC_RELAXED);
                 __atomic_store_n(&state_now, IN, __ATOMIC_RELAXED);
             }
