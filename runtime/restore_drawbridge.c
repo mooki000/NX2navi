@@ -13,8 +13,15 @@
 // The patch set "drawbridge" (recomp/patches-v111.txt) sends the game's once-a-frame update of its flags (main+0x3b500a0
 // calls main+0xb99980 with the flag manager, [main+0x4e842a8]) to bridge_site below, which runs that update and then
 // decides the flag from the clock: the world manager's ([main+0x4e7eab0]) time manager (+0x578), whose function at
-// vtable +0x30 the AI query QueryWorldGetCurrentTime asks for the second of the day. It sets the flag through the game's
-// own setter (main+0x682b20, manager, value, hash); the change takes effect at the next frame's update.
+// vtable +0x30 the AI query QueryWorldGetCurrentTime asks for the second of the day. The other readers of the time of
+// day found in the code (main+0x3e20a8, a time-range test) read it through the same function, or its read inlined;
+// the sky's time table was not traced to its reader. It sets the flag through the game's own setter (main+0x682b20,
+// manager, value, hash); the change takes effect at the next frame's update.
+//
+// It decides only once play has begun (the world clock, frame_step_world_us, has started). A save's flags are loaded
+// before its clock: on a null back-end run the flags already held the save's area while the clock still read the
+// title screen's 10:05, then the save's 22:00, then the 06:00 the game set after the load, and only that one stayed
+// in play (RestoreCode.md). Deciding at the first of these lowered a bridge a night save had left raised.
 //
 // Keeping the saved flag honest:
 // - From when Link has the Goron Ruby and the Zora Sapphire until the escape scene has played, the flag is the story's
@@ -95,16 +102,22 @@ static void bridge_site(Cpu *c) {
     rt_call(c, MAIN + GAMEDATA_UPDATE, 1, mgr);
     unsigned v = cfg_version();
     if (v != seen_version) seen_version = v, on = restore_key_on("DRAWBRIDGE_NIGHT");
-    if (!mgr) return;
+    if (!mgr || frame_step_world_us() < 0) return;   // not in play yet: the clock may still be the title screen's
     int64_t closed = get_bool(mgr, BRIDGE_CLOSE), area = get_int(mgr, AREA);
     if (closed < 0 || area < 0) return;   // no save loaded yet
     if (get_bool(mgr, GOT_RUBY) == 1 && get_bool(mgr, GOT_SAPPHIRE) == 1 && get_bool(mgr, ESCAPE_SEEN) == 0) return;
-    int want = 0, sec = -1;
+    int want = 0, sec = -1, night = 0;
     if (on && get_bool(mgr, CHILDHOOD) == 1) {
         if ((sec = day_second(c)) < 0) return;
-        int night = sec >= NIGHT_FROM || sec < NIGHT_UNTIL;
+        night = sec >= NIGHT_FROM || sec < NIGHT_UNTIL;
         if (night && (area == AREA_FIELD || area == AREA_MARKET)) want = area == AREA_FIELD ? (int)closed : 0;
         else want = night;
+    }
+    static int64_t told_area = -1;
+    if (on && sec >= 0 && area != told_area) {   // once an area: the clock the decision there starts from
+        told_area = area;
+        rt_log("drawbridge: area %lld at %02d:%02d, %s: the bridge %s", (long long)area, sec / 3600, sec / 60 % 60,
+               night ? "night" : "day", want ? "is up" : want != closed ? "comes down" : "stays down");
     }
     if (want == closed) return;
     rt_call(c, MAIN + SET_BOOL, 3, mgr, (uint64_t)want, (uint64_t)BRIDGE_CLOSE);
