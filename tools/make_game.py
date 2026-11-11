@@ -487,7 +487,8 @@ def modules_c(lift, out, gen):
           'const int rt_game_version = 111;',
           'const unsigned long long rt_app_pool_bytes = 9809ull << 20;   /* the Switch 2 application pool */',
           'const int rt_nvn_api_version[2] = {231, 40};   /* NVN2: main asks for major 231, minor 40 or later */',
-          f'const char rt_port_version[] = {json.dumps(kit_version())};']
+          f'const char rt_port_version[] = {json.dumps(kit_version())};',
+          f'const char rt_port_commit[] = {json.dumps(port_commit(KIT))};']
     p = gen / 'modules.c'
     write_if_changed(p, '\n'.join(L) + '\n')
     if WIN:   # on Linux ui/menu_sdl.cpp defines it
@@ -504,6 +505,21 @@ def write_if_changed(path, text):
 def kit_version():
     v = KIT / 'VERSION'
     return v.read_text(encoding='utf-8').strip() if v.is_file() else '0.0.1-ocarina'
+
+
+def port_commit(root):
+    """The commit the runtime is built from (12 hex digits, "-modified" after it when tracked files differ from it), for
+    bug reports; "unknown" outside a git checkout (a release folder)."""
+    try:
+        head = subprocess.run(['git', '-C', str(root), 'rev-parse', '--short=12', 'HEAD'], capture_output=True,
+                              text=True, timeout=30)
+        if head.returncode:
+            return 'unknown'
+        changed = subprocess.run(['git', '-C', str(root), 'status', '--porcelain', '--untracked-files=no'],
+                                 capture_output=True, text=True, timeout=60)
+        return head.stdout.strip() + ('-modified' if changed.stdout.strip() else '')
+    except (OSError, subprocess.SubprocessError):
+        return 'unknown'
 
 
 def pe_imports(path):

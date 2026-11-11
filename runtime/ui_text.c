@@ -603,6 +603,24 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_SAVE_FILE_E_FAILED] = "That did not work; the log says why.",
     [UI_MENU_SAVE_FILE_E_NAME_SET] = "Not renamed: save_file = %s picks the file with that name at each start. Choose "
                                      "another name.",
+    [UI_MENU_REPORT_GROUP] = "Bug report", [UI_MENU_REPORT_SEND] = "Send a bug report",
+    [UI_MENU_REPORT_SEND_DESC] = "Makes a report of this moment for the developer: this run's log, your settings (keys "
+                                 "and passwords left out), the system and its GPU driver, where you are in the game, "
+                                 "the save in use and a picture of the screen, with a line you may write. It shows "
+                                 "everything before anything goes. It is sent to report_url when nx2navi.ini sets "
+                                 "one, else saved in the profile's reports folder.",
+    [UI_MENU_REPORT_LAST_CRASH] = "with the last run's fatal error",
+    [UI_MENU_REPORT_TITLE] = "Bug report", [UI_MENU_REPORT_CRASH_TITLE] = "The last run ended with a fatal error",
+    [UI_MENU_REPORT_CRASH_TEXT] = "Its log and crash report can go to the developer with this report. Nothing is sent "
+                                  "unless you choose Send.",
+    [UI_MENU_REPORT_GATHERING] = "Gathering the report…", [UI_MENU_REPORT_WHAT] = "What goes with it:",
+    [UI_MENU_REPORT_NOTE] = "What happened? (optional)", [UI_MENU_REPORT_DO_SEND] = "Send",
+    [UI_MENU_REPORT_DO_SAVE] = "Save the report", [UI_MENU_REPORT_CANCEL] = "Not now", [UI_MENU_REPORT_CLOSE] = "Close",
+    [UI_MENU_REPORT_SENDING] = "Sending…",
+    [UI_MENU_REPORT_NO_URL] = "report_url is not set in nx2navi.ini: the report is saved, not sent.",
+    [UI_MENU_REPORT_TO] = "Goes to %s", [UI_MENU_REPORT_SENT] = "Sent. The issue: %s",
+    [UI_MENU_REPORT_SAVED] = "Saved as %s", [UI_MENU_REPORT_E_SEND] = "Not sent: %s",
+    [UI_MENU_REPORT_KEPT] = "The report is kept in %s", [UI_MENU_REPORT_E_SAVE] = "The report could not be written into %s",
     [UI_BOOT_TITLE] = "Preparing shaders",
     [UI_BOOT_STARTING] = "Starting", [UI_BOOT_SHADERS] = "Shaders: %lld of %lld", [UI_BOOT_PIPELINES] = "Pipelines: %lld of %lld",
     [UI_BOOT_RESUME_TITLE] = "Restarting", [UI_BOOT_RESUME] = "Back where you were in a moment",
@@ -1235,6 +1253,25 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_SAVE_FILE_E_FAILED] = "Не получилось; причина указана в журнале.",
     [UI_MENU_SAVE_FILE_E_NAME_SET] = "Не переименовано: save_file = %s при каждом запуске выбирает файл с этим именем. "
                                      "Выберите другое имя.",
+    [UI_MENU_REPORT_GROUP] = "Сообщение об ошибке", [UI_MENU_REPORT_SEND] = "Отправить сообщение об ошибке",
+    [UI_MENU_REPORT_SEND_DESC] = "Собирает отчёт об этом моменте для разработчика: журнал этого запуска, ваши настройки "
+                                 "(без ключей и паролей), сведения о системе и драйвере видеокарты, где вы находитесь в "
+                                 "игре, используемое сохранение и снимок экрана, а также строку, которую вы можете "
+                                 "написать. Перед отправкой показывает всё, что уйдёт. Отправляется по адресу "
+                                 "report_url, если он задан в nx2navi.ini, иначе сохраняется в папке reports профиля.",
+    [UI_MENU_REPORT_LAST_CRASH] = "с фатальной ошибкой прошлого запуска",
+    [UI_MENU_REPORT_TITLE] = "Сообщение об ошибке",
+    [UI_MENU_REPORT_CRASH_TITLE] = "Прошлый запуск завершился фатальной ошибкой",
+    [UI_MENU_REPORT_CRASH_TEXT] = "Его журнал и отчёт о сбое можно отправить разработчику вместе с этим сообщением. "
+                                  "Ничего не отправляется, пока вы не выберете «Отправить».",
+    [UI_MENU_REPORT_GATHERING] = "Сбор отчёта…", [UI_MENU_REPORT_WHAT] = "Что будет отправлено:",
+    [UI_MENU_REPORT_NOTE] = "Что произошло? (необязательно)", [UI_MENU_REPORT_DO_SEND] = "Отправить",
+    [UI_MENU_REPORT_DO_SAVE] = "Сохранить отчёт", [UI_MENU_REPORT_CANCEL] = "Не сейчас",
+    [UI_MENU_REPORT_CLOSE] = "Закрыть", [UI_MENU_REPORT_SENDING] = "Отправка…",
+    [UI_MENU_REPORT_NO_URL] = "report_url не задан в nx2navi.ini: отчёт сохраняется, но не отправляется.",
+    [UI_MENU_REPORT_TO] = "Адрес: %s", [UI_MENU_REPORT_SENT] = "Отправлено. Задача: %s",
+    [UI_MENU_REPORT_SAVED] = "Сохранено: %s", [UI_MENU_REPORT_E_SEND] = "Не отправлено: %s",
+    [UI_MENU_REPORT_KEPT] = "Отчёт сохранён в %s", [UI_MENU_REPORT_E_SAVE] = "Не удалось записать отчёт в %s",
     [UI_BOOT_TITLE] = "Подготовка шейдеров",
     [UI_BOOT_STARTING] = "Запуск", [UI_BOOT_SHADERS] = "Шейдеры: %lld из %lld", [UI_BOOT_PIPELINES] = "Конвейеры: %lld из %lld",
     [UI_BOOT_RESUME_TITLE] = "Перезапуск", [UI_BOOT_RESUME] = "Через мгновение вы вернётесь туда, где были",
@@ -1851,6 +1888,25 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_SAVE_FILE_E_FAILED] = "Não deu certo; o log diz o motivo.",
     [UI_MENU_SAVE_FILE_E_NAME_SET] = "Não renomeado: save_file = %s escolhe o arquivo com esse nome a cada "
                                      "inicialização. Escolha outro nome.",
+    [UI_MENU_REPORT_GROUP] = "Relato de bug", [UI_MENU_REPORT_SEND] = "Enviar um relato de bug",
+    [UI_MENU_REPORT_SEND_DESC] = "Monta um relato deste momento para o desenvolvedor: o log desta execução, suas "
+                                 "configurações (sem chaves e senhas), o sistema e o driver da GPU, onde você está no "
+                                 "jogo, o save em uso e uma imagem da tela, com uma linha que você pode escrever. Mostra "
+                                 "tudo antes de enviar. Vai para report_url quando o nx2navi.ini o define; senão é "
+                                 "salvo na pasta reports do perfil.",
+    [UI_MENU_REPORT_LAST_CRASH] = "com o erro fatal da última execução",
+    [UI_MENU_REPORT_TITLE] = "Relato de bug",
+    [UI_MENU_REPORT_CRASH_TITLE] = "A última execução terminou com um erro fatal",
+    [UI_MENU_REPORT_CRASH_TEXT] = "O log dela e o relatório da falha podem ir ao desenvolvedor com este relato. Nada é "
+                                  "enviado a menos que você escolha Enviar.",
+    [UI_MENU_REPORT_GATHERING] = "Reunindo o relato…", [UI_MENU_REPORT_WHAT] = "O que vai junto:",
+    [UI_MENU_REPORT_NOTE] = "O que aconteceu? (opcional)", [UI_MENU_REPORT_DO_SEND] = "Enviar",
+    [UI_MENU_REPORT_DO_SAVE] = "Salvar o relato", [UI_MENU_REPORT_CANCEL] = "Agora não",
+    [UI_MENU_REPORT_CLOSE] = "Fechar", [UI_MENU_REPORT_SENDING] = "Enviando…",
+    [UI_MENU_REPORT_NO_URL] = "report_url não está definido no nx2navi.ini: o relato é salvo, não enviado.",
+    [UI_MENU_REPORT_TO] = "Vai para %s", [UI_MENU_REPORT_SENT] = "Enviado. A issue: %s",
+    [UI_MENU_REPORT_SAVED] = "Salvo como %s", [UI_MENU_REPORT_E_SEND] = "Não enviado: %s",
+    [UI_MENU_REPORT_KEPT] = "O relato fica em %s", [UI_MENU_REPORT_E_SAVE] = "Não foi possível gravar o relato em %s",
     [UI_BOOT_TITLE] = "Preparando shaders",
     [UI_BOOT_STARTING] = "Iniciando", [UI_BOOT_SHADERS] = "Shaders: %lld de %lld", [UI_BOOT_PIPELINES] = "Pipelines: %lld de %lld",
     [UI_BOOT_RESUME_TITLE] = "Reiniciando", [UI_BOOT_RESUME] = "Você volta para onde estava em instantes",
@@ -2545,6 +2601,22 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_SAVE_FILE_DELETED] = "%s 已移到已删除的文件中。",
     [UI_MENU_SAVE_FILE_E_FAILED] = "操作失败；原因见日志。",
     [UI_MENU_SAVE_FILE_E_NAME_SET] = "未重命名：save_file = %s 会在每次启动时选定使用该名称的文件。请换一个名称。",
+    [UI_MENU_REPORT_GROUP] = "错误报告", [UI_MENU_REPORT_SEND] = "发送错误报告",
+    [UI_MENU_REPORT_SEND_DESC] = "为开发者生成此刻的报告：本次运行的日志、你的设置（不含密钥和密码）、系统与显卡驱动信息、"
+                                 "你在游戏中的位置、正在使用的存档和一张屏幕截图，还可以附上一句说明。发送前会列出将要"
+                                 "发送的全部内容。如果 nx2navi.ini 设置了 report_url 就发送到该地址，否则保存到配置"
+                                 "文件夹的 reports 文件夹中。",
+    [UI_MENU_REPORT_LAST_CRASH] = "附带上次运行的致命错误",
+    [UI_MENU_REPORT_TITLE] = "错误报告", [UI_MENU_REPORT_CRASH_TITLE] = "上次运行因致命错误而结束",
+    [UI_MENU_REPORT_CRASH_TEXT] = "它的日志和崩溃报告可以随本报告一起发给开发者。除非你选择“发送”，否则不会发送任何内容。",
+    [UI_MENU_REPORT_GATHERING] = "正在收集报告…", [UI_MENU_REPORT_WHAT] = "将要发送的内容：",
+    [UI_MENU_REPORT_NOTE] = "发生了什么？（可选）", [UI_MENU_REPORT_DO_SEND] = "发送",
+    [UI_MENU_REPORT_DO_SAVE] = "保存报告", [UI_MENU_REPORT_CANCEL] = "以后再说", [UI_MENU_REPORT_CLOSE] = "关闭",
+    [UI_MENU_REPORT_SENDING] = "正在发送…",
+    [UI_MENU_REPORT_NO_URL] = "nx2navi.ini 中未设置 report_url：报告只会保存，不会发送。",
+    [UI_MENU_REPORT_TO] = "发送到 %s", [UI_MENU_REPORT_SENT] = "已发送。问题地址：%s",
+    [UI_MENU_REPORT_SAVED] = "已保存为 %s", [UI_MENU_REPORT_E_SEND] = "未发送：%s",
+    [UI_MENU_REPORT_KEPT] = "报告保存在 %s", [UI_MENU_REPORT_E_SAVE] = "无法将报告写入 %s",
     [UI_BOOT_TITLE] = "正在准备着色器",
     [UI_BOOT_STARTING] = "正在启动", [UI_BOOT_SHADERS] = "着色器：%lld / %lld", [UI_BOOT_PIPELINES] = "管线：%lld / %lld",
     [UI_BOOT_RESUME_TITLE] = "正在重启", [UI_BOOT_RESUME] = "马上回到你刚才的位置",

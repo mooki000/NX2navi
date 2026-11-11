@@ -39,6 +39,7 @@ static int g_font_bad;
 #include "ui/saves_page.h"
 #include "ui/option_rows.h"
 #include "ui/perf_panel.h"
+#include "ui/report_page.h"
 
 extern "C" {
 #include "amiibo.h"
@@ -534,7 +535,8 @@ extern "C" void menu_vk_release(void) {
 // right, enter, escape or tab) and TYPE=<text> types text, into the page shown as the window's key and text events go
 // (test_key), also on the hook's own pages, which drop the window's events; so a run fills a text field and confirms it
 // as a keyboard does. SAVE_FILE_OPEN, SAVE_FILE_PAGE and SAVE_FILE_PLAY drive the Saves tab's file window
-// (ui/saves_page.h saves_test_set).
+// (ui/saves_page.h saves_test_set); REPORT_OPEN, REPORT_NOTE, REPORT_SEND, REPORT_CANCEL and CRASH its bug report
+// (ui/report_page.h report_test_set).
 // Ocarina of Time: the options this port has, and the restorations (ui/restore_tab.cpp)
 enum { TAB_SCREEN, TAB_GAME, TAB_SAVES, TAB_SOUND, TAB_CONTROLS, TAB_RESTORE, TAB_COUNT };
 enum { TEST_PAGE_FRAMES = 30, TEST_SETS = 16 };
@@ -610,6 +612,7 @@ static void test_key(const char *key, const char *value) {
     rt_log("menu: test hook: KEY=%s is no key the hook knows", value);
 }
 
+static void go_to(int tab, const char *key);
 static void test_apply_sets(uint64_t frame) {
     for (; g_test.next_set < g_test.n_sets && g_test.sets[g_test.next_set].frame <= frame; g_test.next_set++) {
         const TestSet &t = g_test.sets[g_test.next_set];
@@ -635,6 +638,11 @@ static void test_apply_sets(uint64_t frame) {
             voice_lang_request(i);
         } else if (!strcmp(t.key, "NX2NAVI_KEY") || !strcmp(t.key, "NX2NAVI_TYPE")) {
             test_key(t.key, t.value);
+        } else if (int r = report_test_set(t.key, t.value)) {
+            if (r == 2) {
+                set_open(1);
+                go_to(TAB_SAVES, "##report_send");
+            }
         } else if (!saves_test_set(t.key, t.value)) {
             cfg_set(t.key, t.value);
         }
@@ -1273,6 +1281,7 @@ static void rows_saves(void) {
         warn = false;
     }
     if (line[0]) opt_text_str(line, warn);
+    report_rows();   // the Bug report group (ui/report_page.cpp)
 }
 
 static void tab_game(float scale) {
@@ -1598,7 +1607,7 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
         ImGui::TextDisabled("%s", version);
     }
 
-    int step = g_modal || binds_modal() || saves_modal()                                                 ? 0
+    int step = g_modal || binds_modal() || saves_modal() || report_modal()                               ? 0
              : ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_E, false) ? 1
              : ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_Q, false) ? -1
                                                                                                          : 0;
@@ -1672,8 +1681,9 @@ static void layout_menu(uint32_t w, uint32_t h, float scale) {
     ImGui::SameLine(0, gap);
     if (skin_widget_button(quit, ImVec2(bw, 0), scale)) g_confirm_quit = true, ImGui::OpenPopup("##confirm");
     restart_confirm(scale);
+    report_window(scale);
     menu_sounds_frame();
-    bool was_modal = g_modal || binds_modal() || saves_modal();
+    bool was_modal = g_modal || binds_modal() || saves_modal() || report_modal();
     if (!was_modal && (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false)))
         set_open(0);
     ImGui::End();
@@ -1867,6 +1877,15 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
     perf_tick(plat_now_ns(), t);
     amiibo_tick();
     if (g_booting.load(std::memory_order_relaxed)) g_booting.store(0, std::memory_order_release);   // the game runs
+    bool offer = false;
+    if (const char *picture = report_frame(frame, &offer)) {   // the bug report's picture: this frame without the menu
+        *shot = picture;
+        return 0;
+    }
+    if (offer) {   // the start after a fatal error offers its report
+        g_tab_request = TAB_SAVES;
+        set_open(1);
+    }
     bool open = g_open.load(std::memory_order_relaxed);
     // the frame the menu is first laid out after opening: also when its g_reset went to an earlier frame of the overlay
     // alone (the menu opened between the two loads), the pad's buttons held now must not count as presses
@@ -1917,6 +1936,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
         io.ClearInputMouse();
         binds_cancel();          // a cell waiting for a press when the menu closed: no press binds on the next opening
         saves_cancel();          // a save file's window closes; the list is read again
+        report_cancel();         // a bug report the player left waiting closes; one gathering or sending goes on
         g_sound_fresh = true;
         g_last_ns = 0;
         g_focus_page = g_tab_request >= 0 ? g_tab_request : g_tab;   // opening: the first row has the cursor

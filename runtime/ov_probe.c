@@ -898,6 +898,20 @@ static void probe_menu_text(void) {
             CHECK(conv <= 1 && !other, "saves text %d in %s has %d %%s and %d other conversions", id, menu_langs[i],
                   conv, other);
         }
+    // the bug report window's lines (ui/report_page.cpp): formats of one address, path or reason, nothing else
+    for (int id = UI_MENU_REPORT_TO; id <= UI_MENU_REPORT_E_SAVE; id++)
+        for (size_t i = 0; i < 4; i++) {
+            static const char *const menu_langs[] = {"en", "ru", "pt-BR", "zh-Hans"};
+            const char *t = ui_text_in(menu_langs[i], (UiTextId)id);
+            int conv = 0, other = 0;
+            for (const char *q = strchr(t, '%'); q; q = strchr(q + 2, '%')) {
+                if (q[1] == 's') conv++;
+                else if (q[1] != '%') other++;
+                if (!q[1]) break;
+            }
+            CHECK(conv == 1 && !other, "report text %d in %s has %d %%s and %d other conversions", id, menu_langs[i],
+                  conv, other);
+        }
     // other languages fall back to English for the menu, and keep their own keyboard texts
     CHECK(!strcmp(ui_text_in("ja", UI_MENU_CONTINUE), ui_text_in("en", UI_MENU_CONTINUE)), "ja menu text is not English");
     CHECK(!strcmp(ui_text_in("ru", UI_SWKBD_OK), "ОК") && !strcmp(ui_text_in("de", UI_SWKBD_CANCEL), "Abbrechen") &&

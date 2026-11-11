@@ -1802,6 +1802,33 @@ int plat_run_self(const char *env_name, const char *env_value, char *out, size_t
     return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + (WIFSIGNALED(status) ? WTERMSIG(status) : 0);
 }
 
+int plat_run(const char *const *argv, uint32_t timeout_ms) {
+    posix_spawn_file_actions_t fa;
+    posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
+    posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
+    posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
+    pid_t pid;
+    int e = posix_spawnp(&pid, argv[0], &fa, NULL, (char *const *)argv, environ);
+    posix_spawn_file_actions_destroy(&fa);
+    if (e) return -1;
+    int status = 0;
+    uint64_t end = plat_now_ns() + (uint64_t)timeout_ms * 1000000u;
+    for (;;) {
+        pid_t r = waitpid(pid, &status, timeout_ms ? WNOHANG : 0);
+        if (r == pid) break;
+        if (r < 0 && errno != EINTR) return -1;
+        if (timeout_ms && plat_now_ns() >= end) {
+            kill(pid, SIGKILL);
+            while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+            return -2;
+        }
+        if (r == 0) plat_sleep_ms(20);
+    }
+    // glibc's posix_spawnp reports a program missing from PATH as exit code 127 of the child
+    return WIFEXITED(status) ? (WEXITSTATUS(status) == 127 ? -1 : WEXITSTATUS(status)) : 128 + WTERMSIG(status);
+}
+
 int plat_random(void *out, size_t n) {
     uint8_t *p = out;
     while (n) {

@@ -504,6 +504,14 @@
 # The key of the application's uploaded art asset (Rich Presence > Art Assets) shown as the status's large image.
 # discord_image = nx2navi_512x512
 
+[bug report]
+# Where the menu's Send a bug report (Saves tab) sends its report: the address of a report receiver
+# (tools/report_server.py), which files it as an issue. Unset: the report is only written into <profile>/reports/
+# and the menu says where. The game sends through curl, which Linux and Windows 10 and later have.
+# report_url = http://127.0.0.1:8787/report
+# The receiver's shared key. It goes only to report_url, never into a report, a log line or the system information.
+# report_key =
+
 [audio]
 # none mixes without opening an audio device.
 # audio = default

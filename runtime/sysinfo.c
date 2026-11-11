@@ -10,6 +10,7 @@
 #include "cfg.h"
 #include "host.h"
 #include "platform/platform.h"
+#include "save_share.h"
 #include "sysinfo.h"
 #include "vk.h"
 
@@ -53,6 +54,7 @@ static void put(Out *o, const char *fmt, ...) {
 }
 
 static void put_setting(const char *key, const char *value, int from_env, void *ctx) {
+    if (save_share_secret(key)) value = "(left out)";   // a report_key or co-op key never goes into a report
     put(ctx, from_env ? "  NX2NAVI_%s=%s (environment)\n" : "  %s = %s\n", key, value);
 }
 

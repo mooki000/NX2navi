@@ -319,6 +319,11 @@ long plat_tz_west(void);                  // the local zone's standard offset, s
 // expect the child to stop with a fatal. Its stdout and stderr go into out (NUL-terminated, the rest discarded); waits
 // at most timeout_ms (0: no limit) and kills it after that. Returns the exit code, -1 when it could not start.
 int plat_run_self(const char *env_name, const char *env_value, char *out, size_t cap, uint32_t timeout_ms);
+// Runs the program argv[0] (looked up on PATH, and on Windows in the system folders too) with the arguments argv[1..],
+// the last followed by NULL, without a console window, its standard input, output and error on the null device. Waits
+// at most timeout_ms (0: no limit) and kills it after that. Returns the exit code, -1 when it could not start, -2 when
+// it was killed for the time limit.
+int plat_run(const char *const *argv, uint32_t timeout_ms);
 
 // ---- randomness
 int plat_random(void *out, size_t n);     // cryptographically random bytes; 1 on success

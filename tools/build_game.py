@@ -364,7 +364,8 @@ def module_glue(layout, linked, hashes, paths, version):
     number = int(DISPLAY_VERSIONS[version].replace('.', '')) if version in DISPLAY_VERSIONS else 0   # 1.4.3 -> 143
     out += ['const unsigned long long rt_app_pool_bytes = 0xCD500000ull;',   # Switch 1 retail application pool
             'const int rt_nvn_api_version[2] = {55, 15};',   # NVN1: NX2NAVI main requires major 55, minor >= 15
-            f'const int rt_game_version = {number};', f'const char rt_port_version[] = {c_string(port_version())};', '']
+            f'const int rt_game_version = {number};', f'const char rt_port_version[] = {c_string(port_version())};',
+            f'const char rt_port_commit[] = {c_string(port_commit())};', '']
     return '\n'.join(out)
 
 
@@ -373,6 +374,21 @@ def port_version():
     version)."""
     path = ROOT / 'VERSION'
     return path.read_text(encoding='utf-8').strip() if path.is_file() else 'unknown'
+
+
+def port_commit():
+    """The commit the runtime is built from (12 hex digits, "-modified" after it when tracked files differ from it), for
+    bug reports; "unknown" outside a git checkout (a release folder)."""
+    try:
+        head = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--short=12', 'HEAD'], capture_output=True,
+                              text=True, timeout=30)
+        if head.returncode:
+            return 'unknown'
+        changed = subprocess.run(['git', '-C', str(ROOT), 'status', '--porcelain', '--untracked-files=no'],
+                                 capture_output=True, text=True, timeout=60)
+        return head.stdout.strip() + ('-modified' if changed.stdout.strip() else '')
+    except (OSError, subprocess.SubprocessError):
+        return 'unknown'
 
 
 def ninja_file(gen, out, mods, pool_depth, skip=(), prebuilt=False, runtime_lib=None, make_lib=False):

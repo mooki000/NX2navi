@@ -46,6 +46,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bug_report.h"
 #include "cfg.h"
 #include "host.h"
 #include "logq.h"
@@ -330,6 +331,7 @@ static void crash_handler(const PlatCrash *x) {
         rt_logf("  not on a guest thread\n");
     }
     kern_free_cores_note();
+    bug_report_crashed();   // the next start offers this run's report (bug_report.c)
     rtss_limit_restore();   // after the report: RivaTuner Statistics Server's profile as it was
     fflush(stderr);
     prof_sampler_write();   // NX2NAVI_PROFILE: what was sampled until the crash (it gives up after 2 s if the sampler hangs)
@@ -670,6 +672,7 @@ int main(int argc, char **argv) {
         cfg.boot = cfg.seconds > 0;   // --seconds starts the game like --boot, with its checkpoints
         vk_driver_cache_env();   // before the threads below and rt_boot's, any of which may load the Vulkan driver
         discord_init();   // the Rich Presence thread (discord_rpc.c); it reads nx2navi.ini itself and idles while off
+        bug_report_start();   // the last run's fatal error, if any, for the menu's offer; this run's note armed
         rt_boot();
         return 0;
     }

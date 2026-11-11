@@ -515,6 +515,26 @@ def _fresh_file(folder, stem, suffix):
     return p
 
 
+def secret_setting(key):
+    """A setting whose value never leaves the machine in a zip (runtime/save_share.c save_share_secret): report_key,
+    co-op keys, anything named a secret, token or password."""
+    k = key.strip().upper()
+    k = k[len('NX2NAVI_'):] if k.startswith('NX2NAVI_') else k
+    return (k == 'REPORT_KEY' or any(w in k for w in ('SECRET', 'TOKEN', 'PASSWORD', 'PASSPHRASE'))
+            or (k.startswith('COOP') and 'KEY' in k))
+
+
+def clean_ini(text):
+    """nx2navi.ini's text with the value of each secret setting replaced by "(left out)" (save_share_clean_ini)."""
+    out = []
+    for line in text.split('\n'):
+        key, eq, _ = line.partition('=')
+        if eq and key.strip() and key.strip()[0] not in '#;' and secret_setting(key):
+            line = key + '= (left out)'
+        out.append(line)
+    return '\n'.join(out)
+
+
 def export_save(game, dest=None, bug_report=False, version='', log=print):
     """Write the save the game would load now into one zip in dest (default_export_dir when None), for a bug report
     or another player. bug_report adds the game's latest log and nx2navi.ini. Never a key file. Returns {'path',
@@ -545,7 +565,10 @@ def export_save(game, dest=None, bug_report=False, version='', log=print):
                 for rel in files:
                     z.write(current / rel, SAVE_DIR + rel.as_posix())
                 for f in extras:
-                    z.write(f, REPORT_DIR + f.name)
+                    if f.name == 'nx2navi.ini':
+                        z.writestr(REPORT_DIR + f.name, clean_ini(f.read_text(encoding='utf-8', errors='replace')))
+                    else:
+                        z.write(f, REPORT_DIR + f.name)
             os.replace(tmp, out)
         except FileNotFoundError:
             tmp.unlink(missing_ok=True)
