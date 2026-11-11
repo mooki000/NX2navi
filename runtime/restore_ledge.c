@@ -10,9 +10,11 @@
 //
 // - main+0x7f755c, in the update where the ground check (main+0x7f76b0: nothing within reach below Link's feet) found
 //   no ground: the instruction loads the stick's tilt, and above 0.65 the update keeps Link walking a few frames in the
-//   air (a grace in which the jump button still jumps) before it picks Fall at main+0x7f75a0. AUTO_HOP: running (see
-//   HOP_SPEED) and allowed to jump, Link skips the grace (the tilt reads 0) and the pick at main+0x7f75a0 becomes Jump.
-// - main+0x7f75a0, that pick of Fall: Jump after AUTO_HOP's decision, else Fall as before.
+//   air (a grace in which the jump button still jumps) before it picks Fall at main+0x7f75a0. Running (see HOP_SPEED)
+//   and allowed to jump, Link skips the grace (the tilt reads 0) and the pick at main+0x7f75a0 becomes Jump with
+//   AUTO_HOP, or the dive with LEDGE_DIVE when the water below is deep and far enough down: in the original the run
+//   off such a ledge was the jump that dived, so LEDGE_DIVE does that without AUTO_HOP too.
+// - main+0x7f75a0, that pick of Fall: Jump or the dive after the decision at main+0x7f755c, else Fall as before.
 // - main+0x7f72a4 and main+0x7fa524, where the update and the transitions pick Jump for the jump button.
 // - main+0x301e9b4, in the diving game's water check (main+0x301e700), where it compares Link's height with the
 //   surface of the water it found ahead: LEDGE_DIVE asks that check with Link at least DIVE_HEIGHT above the water.
@@ -34,7 +36,7 @@
 RESTORATION_CODE(auto_hop, "AUTO_HOP", "Jump off ledges",
                  "Link jumps by himself when he runs off a ledge; walking off still drops him.");
 RESTORATION_CODE(ledge_dive, "LEDGE_DIVE", "Dive from ledges",
-                 "A jump off a ledge at least 5 m above deep water is a dive into it.");
+                 "Running or jumping off a ledge at least 5 m above deep water is a dive into it.");
 
 #ifdef RT_PATCH_PAGE
 
@@ -66,7 +68,8 @@ RESTORATION_CODE(ledge_dive, "LEDGE_DIVE", "Dive from ledges",
 
 static int hop_on, dive_on;
 static unsigned seen_version = ~0u;
-static _Thread_local uint64_t hop_scheduler;   // the walk scheduler whose fall SITE_GRACE turned into a jump
+static _Thread_local uint64_t hop_scheduler;   // the walk scheduler whose fall SITE_GRACE turned into a jump or dive
+static _Thread_local uint8_t hop_child;        // CHILD_JUMP or CHILD_DIVE, which SITE_FALL then picks
 static _Thread_local float water_margin;       // added to the water's height while ledge_dive_ok asks DEEP_WATER
 static const float no_tilt = 0;                // the tilt SITE_GRACE hands the grace's test when Link hops
 
@@ -106,16 +109,16 @@ static void note(const char *what, uint64_t actor) {
            f32_at(actor + ACTOR_POS + 8));
 }
 
-// LEDGE_DIVE: the jump Link is about to make is a dive. The diving game's own tests decide where: its test of Link's
-// state, and its water test (main+0x301e700) 6 m ahead of him: water within 100 m below that point and under his feet,
-// at least 2 m deep (nothing solid within 2 m below the surface) and nothing in the way of the dive. Asked with
-// water_margin, the surface must also lie DIVE_HEIGHT below his feet.
-static int ledge_dive_ok(Cpu *c, uint64_t scheduler, uint64_t actor) {
+// LEDGE_DIVE: the jump Link is about to make (what: which one, for the log) is a dive. The diving game's own tests
+// decide where: its test of Link's state, and its water test (main+0x301e700) 6 m ahead of him: water within 100 m
+// below that point and under his feet, at least 2 m deep (nothing solid within 2 m below the surface) and nothing in
+// the way of the dive. Asked with water_margin, the surface must also lie DIVE_HEIGHT below his feet.
+static int ledge_dive_ok(Cpu *c, uint64_t scheduler, uint64_t actor, const char *what) {
     if (!dive_on || LD8(scheduler + CHILD_DIVE) == 0xff || !ask(c, DIVE_STATE_OK, actor, 0)) return 0;
     water_margin = DIVE_HEIGHT;
     int ok = ask(c, DEEP_WATER, actor, 0);
     water_margin = 0;
-    if (ok) note("LEDGE_DIVE: the jump is a dive", actor);
+    if (ok) note(what, actor);
     return ok;
 }
 
@@ -124,19 +127,22 @@ static void at_grace(Cpu *c) {
     uint64_t state = c->x[22], actor = c->x[20];
     c->x[8] = LD64(state + 0xa0);
     hop_scheduler = 0;
-    if (!hop_on) return;
+    if (!hop_on && !dive_on) return;
     float vx = f32_at(actor + ACTOR_VEL_X), vz = f32_at(actor + ACTOR_VEL_Z);
     if (vx * vx + vz * vz < HOP_SPEED * HOP_SPEED || !ask(c, CAN_JUMP, actor, 1)) return;
+    int dive = ledge_dive_ok(c, c->x[19], actor, "LEDGE_DIVE: the run off the ledge is a dive");
+    if (!dive && !hop_on) return;   // LEDGE_DIVE alone: no deep water below, so the fall as it ships
     hop_scheduler = c->x[19];
+    hop_child = dive ? CHILD_DIVE : CHILD_JUMP;
     c->x[8] = (uint64_t)(uintptr_t)&no_tilt;
 }
 
-// SITE_FALL: the update picks Fall; after at_grace's decision it picks Jump (or the dive).
+// SITE_FALL: the update picks Fall; after at_grace's decision it picks Jump or the dive.
 static void at_fall(Cpu *c) {
     uint64_t scheduler = c->x[19];
     int child = CHILD_FALL;
     if (hop_scheduler == scheduler) {
-        child = ledge_dive_ok(c, scheduler, c->x[20]) ? CHILD_DIVE : CHILD_JUMP;
+        child = hop_child;
         if (child == CHILD_JUMP) note("AUTO_HOP: Link jumps off the ledge", c->x[20]);
     }
     hop_scheduler = 0;
@@ -145,10 +151,13 @@ static void at_fall(Cpu *c) {
 
 // SITE_JUMP_UPDATE (main+0x7f70d0, x20 the actor) and SITE_JUMP_ENTER (main+0x7fa150, x21 the actor): the jump button.
 static void at_jump_update(Cpu *c) {
-    c->x[1] = LD8(c->x[19] + (ledge_dive_ok(c, c->x[19], c->x[20]) ? CHILD_DIVE : CHILD_JUMP));
+    int dive = ledge_dive_ok(c, c->x[19], c->x[20], "LEDGE_DIVE: the jump is a dive");
+    c->x[1] = LD8(c->x[19] + (dive ? CHILD_DIVE : CHILD_JUMP));
 }
 
-static void at_jump_enter(Cpu *c) { c->x[8] = ledge_dive_ok(c, c->x[19], c->x[21]) ? CHILD_DIVE : CHILD_JUMP; }
+static void at_jump_enter(Cpu *c) {
+    c->x[8] = ledge_dive_ok(c, c->x[19], c->x[21], "LEDGE_DIVE: the jump is a dive") ? CHILD_DIVE : CHILD_JUMP;
+}
 
 // SITE_WATER (main+0x301e700): the surface's height, raised by water_margin while ledge_dive_ok asks.
 static void at_water(Cpu *c) {
