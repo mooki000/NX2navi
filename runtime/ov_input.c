@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "autopilot.h"
 #include "cfg.h"
 #include "host.h"
 #include "input.h"
@@ -93,6 +94,7 @@ static void npad_states(Cpu *c, uint32_t want) {
     if (live) {
         s.attributes = ATTR_CONNECTED;
         input_poll(&s.buttons, &s.lx, &s.ly, &s.rx, &s.ry);
+        autopilot_guest(c);   // autopilot.c: the save step's autosave request needs a guest thread
     }
     *out = s;
     resume_guest(c);   // resume.c: Restart's autosave request needs a guest thread; the game calls this every frame

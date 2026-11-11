@@ -170,9 +170,18 @@ hold <button>[+<button>...]               # held from here on, through the steps
 release [<button>[+<button>...]]          # held buttons let go, all without a name
 shot <name>                               # the next frame as <NX2NAVI_SHOT_DIR>/ap-<step>-<name>.png
 log <text>
+until <condition> [timeout <s>]           # waits until the game's state meets the condition: reached, or timeout (30)
+expect <condition>                        # checks it once: met or unmet (counted at the end)
+climb up|down [timeout <s>]               # the left stick up (down) while Link climbs: reached once his height stood still
+                                          # 1 s after it changed, stuck when it never changed in 1.5 s, timeout (20)
+trace <s>                                 # from here on a line every s seconds: Link's place, area, life, time of day
+save [timeout <s>]                        # asks the game for its own autosave (its event node's request): done once it
+                                          # saved, refused when the game's check refused until the timeout (60)
 ```
 
-A script with an error is refused whole (`autopilot: <file> line N: ...`). The log shows `autopilot: gameplay at tick T` when the save has loaded, one line per finished step with its result (`done`, `reached`, `timeout`, `stuck`, `taken`, `missed`) and Link's position, a progress line per second of a moving step, `autopilot: done: ...` with the counts, and `autopilot: route frames: ...`: the presented frames from the first step to the end of the last (mean fps, 1% low, frames over 25, 50 and 100 ms, game seconds and game speed), without the frames that carried a picture's capture.
+A condition is `flag <name><op><value>`, the game's own flag by its name (a Bool `0`/`1`; an Int or UInt a number with `=`, `!=`, `<`, `>`, `<=` or `>=`; an Enum's value by its name; a String64's text), for example `flag HavePlayedEvent.Obj_Kokiri_MessageBoard_A_02=1` (a sign read) or `flag PlayerStatus.Life>=8` (life in quarter hearts), or `area <name>`, the area Link is in (`Sequence_CurrentBanc`: `KokiriForest_Child`, `LostWood_Child`, ...), which suits a step that crosses a load. The flags are read from the game's flag manager as the game keeps them; nothing is written. The game refuses an autosave for 1800 of its updates after each save, during the title and scene changes, and while `System_IsSaveTemporaryStorage` is set; the request is made only when its own check passes.
+
+A script with an error is refused whole (`autopilot: <file> line N: ...`). The log shows `autopilot: gameplay at tick T` when the save has loaded, one line per finished step with its result (`done`, `reached`, `timeout`, `stuck`, `taken`, `missed`, `met`, `unmet`, `refused`) and Link's position, a progress line per second of a moving step, `autopilot: done: ...` with the counts, and `autopilot: route frames: ...`: the presented frames from the first step to the end of the last (mean fps, 1% low, frames over 25, 50 and 100 ms, game seconds and game speed), without the frames that carried a picture's capture.
 
 ## RenderDoc capture (blocked)
 

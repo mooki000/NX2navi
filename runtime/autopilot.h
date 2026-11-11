@@ -9,3 +9,7 @@ void autopilot_input(uint64_t *b, int32_t sl[2], int32_t sr[2]);
 // path of a named picture to take of this frame, NULL for none. can_shoot 0 (the frame is already being taken for
 // another reason) keeps a pending picture for the next frame.
 const char *autopilot_present(int can_shoot);
+// ov_input.c npad_states, on the guest thread that polls the pad, right after its poll: the save step's request for the
+// game's autosave, which needs a guest thread to call the game. Returns at once unless a save step asks.
+struct Cpu;
+void autopilot_guest(struct Cpu *c);
