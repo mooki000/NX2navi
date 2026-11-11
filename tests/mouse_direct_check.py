@@ -222,6 +222,7 @@ int input_overlay_gate(int *h,uint64_t *b) { (void)h;(void)b;abort(); }
 int menu_is_open(void) { abort(); }
 void menu_toggle(void) { abort(); }
 void menu_perf_cycle(void) { abort(); }
+void autopilot_input(uint64_t *b,int32_t sl[2],int32_t sr[2]) { (void)b;(void)sl;(void)sr;abort(); }
 const char *input_action_name(int action) { (void)action;abort(); }
 void input_map_configure(void) { abort(); }
 int resume_booting(void) { abort(); }

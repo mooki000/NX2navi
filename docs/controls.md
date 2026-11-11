@@ -156,6 +156,24 @@ The PS button is not used. The Controls tab binds and remaps its buttons like an
 
 `NX2NAVI_TEST_PAD=<lx>,<ly>,<rx>,<ry>` attaches an SDL virtual gamepad at start whose sticks rest at these raw SDL axis values (-32768 to 32767, down is +y), so a drifting or held stick can be tested without a controller: the values go through the gamepad mapping and `NX2NAVI_STICK_DEADZONE` like a real pad's, and `NX2NAVI_INPUT_RECORD` shows what reached the game. `NX2NAVI_TEST_PAD_AT=<ms>` attaches it that long after input starts instead and presses its south button a second later, which tests a controller switched on in play.
 
+`NX2NAVI_AUTOPILOT=<file>` (test runs, game 1.1.1; `runtime/autopilot.c`) drives Link through a route once the save has loaded, steering from his position and the camera's direction, which it reads from the game at every poll: a route reaches the same places at any frame rate and load length, where a frame-based script drifts. Its input is ORed with the real input and the input script, like the script's. One step per line, `#` starts a comment; times are seconds of game time, distances metres, `x` and `z` the world's ground coordinates (y up), as the placement files and the saves give them:
+
+```
+wait <s>
+walk <x> <z> [radius <m>] [timeout <s>]   # half tilt; reached within radius (1), timeout (30), stuck: no 0.25 m nearer in 3 s
+run <x> <z> [radius <m>] [timeout <s>]    # full tilt
+look <x> <z> [timeout <s>]                # the right stick turns the camera until it faces the point within 10 degrees
+camera <x> <y> <s>                        # the right stick held at x, y (-1..1, up +y)
+stick <x> <y> <s>                         # the left stick held (open loop: into water, through a door)
+press <button>[+<button>...] [<s>]        # held for s (0.1), then released for 0.1 s; the script's button names
+hold <button>[+<button>...]               # held from here on, through the steps that follow (aim, then a picture)
+release [<button>[+<button>...]]          # held buttons let go, all without a name
+shot <name>                               # the next frame as <NX2NAVI_SHOT_DIR>/ap-<step>-<name>.png
+log <text>
+```
+
+A script with an error is refused whole (`autopilot: <file> line N: ...`). The log shows `autopilot: gameplay at tick T` when the save has loaded, one line per finished step with its result (`done`, `reached`, `timeout`, `stuck`, `taken`, `missed`) and Link's position, a progress line per second of a moving step, `autopilot: done: ...` with the counts, and `autopilot: route frames: ...`: the presented frames from the first step to the end of the last (mean fps, 1% low, frames over 25, 50 and 100 ms, game seconds and game speed), without the frames that carried a picture's capture.
+
 ## RenderDoc capture (blocked)
 
 `NX2NAVI_RDOC=<frame>[,...]` (`runtime/rdoc_win.c`; `NX2NAVI_RDOC_DIR`, `NX2NAVI_RDOC_DLL`) loads RenderDoc before `vkCreateInstance`. RenderDoc hides `VK_EXT_external_memory_host`, which the back end requires for guest pool imports (`runtime/vk_memory.c`), so device creation fails under it. A capture needs a copy-based pool fallback first.

@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include "audren.h"
+#include "autopilot.h"
 #include "cfg.h"
 #include "flight.h"
 #include "fs.h"
@@ -1400,6 +1401,11 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
     int overlay = dst_view &&
                   (src ? menu_overlay_frame(__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED), &mt, &menu_shot)
                        : menu_boot_frame(&mt));
+    // NX2NAVI_AUTOPILOT (test): the route's frame times, and a named picture of this frame when one is due (autopilot.c)
+    if (src) {
+        const char *ap = autopilot_present(!menu_shot);
+        if (ap) menu_shot = ap;
+    }
     // NX2NAVI_SHOT_EVERY=<s> with NX2NAVI_SHOT_DIR=<dir>: the presented frame as shot_<n>.png every s seconds
     // (a check of what the window shows, for runs nobody watches)
     static char shot_path[1100];
