@@ -12,6 +12,9 @@ int input_script_button(const char *name);
 // 1 when keyboard and mouse are the device the player used last, 0 when the gamepad is: what is shown for pointing
 // (menu_cursor.c shows the pointer in the game's menus only for the keyboard and mouse)
 int input_kbm_last(void);
+// restore_first_person.c (the FIRST_PERSON restoration), at the end of every input_poll: reads the look button (L3) and
+// the sticks for the view and, while the view is on, leaves the game only Plus and Minus. Nothing without the setting.
+void first_person_input(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);
 // Direct mouse input is consumed by the game's camera-input update, after its stick response. While that update
 // accepts camera input, the HID right stick contains only the controller and keyboard. Selectors route mouse input
 // separately: a persistent radial cursor for the ability wheel, discrete steps for horizontal quick lists.

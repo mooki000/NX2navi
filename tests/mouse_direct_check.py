@@ -236,6 +236,7 @@ void input_direct_mouse_row(int32_t dx,float sensitivity,uint64_t now,InputMouse
 void input_direct_mouse_radial(int32_t dx,int32_t dy,float sensitivity,float cursor[2],int32_t out[2]) {
     (void)dx;(void)dy;(void)sensitivity;radial_calls++;cursor[0]=1;out[0]=456;out[1]=789;
 }
+void first_person_input(uint64_t *b,int32_t *lx,int32_t *ly,int32_t *rx,int32_t *ry) { (void)b;(void)lx;(void)ly;(void)rx;(void)ry;abort(); }
 static const char *script_path;
 static uint64_t test_tick;
 static int64_t test_world=-1;

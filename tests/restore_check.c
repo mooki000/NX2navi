@@ -1,9 +1,11 @@
-// The restorations (runtime/restore.c, restore_engine.c, byml.c, sarc.c) on the fixtures tests/restore_check.py
-// writes into the folder given: runs edits on them, checks which apply and which are skipped, writes the results for
-// the script to decode, feeds the parser, the engine and the SARC reader and writer every cut length of those files
-// and damaged copies, checks the parser refuses dicts out of order (and quickly), and runs restore.c's switches, start
-// and probe with the settings, the log and the RomFS stubbed below.
-// Usage: restore_check <folder>
+// The restorations (runtime/restore.c, restore_engine.c, byml.c, sarc.c, msbt.c, ainb.c) on the fixtures
+// tests/restore_check.py writes into the folder given: runs edits of every kind on them, checks which apply and which
+// are skipped, writes the results for the script to decode, feeds the parsers, the engine and the SARC reader and
+// writer every cut length of those files and damaged copies, checks the parser refuses dicts out of order (and
+// quickly), and runs restore.c's switches, start and probe with the settings, the log and the RomFS stubbed below.
+// Usage: restore_check <folder>; restore_check --graphs reads logic graphs from stdin ({u32 size, bytes} each) and
+// answers each with {u8 written back unchanged, u32 size, the graph with a copy of one of its nodes added (size 0: it
+// has none that can be copied, or it is refused)} for the script to compare.
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,9 +13,11 @@
 #include <time.h>
 #include <zstd.h>
 
+#include "ainb.h"
 #include "byml.h"
 #include "cfg.h"
 #include "host.h"
+#include "msbt.h"
 #include "platform/platform.h"
 #include "restore.h"
 #include "sarc.h"
@@ -72,17 +76,38 @@ static uint8_t *unzstd(const uint8_t *z, size_t n, size_t *out_n) {
     return p;
 }
 
-// Runs edits[0..n) on file; ok must come out as want. Returns the edited file (or NULL).
+// The fixtures other files' edits copy from: "test/<name>" is <folder>/<name>; NULL when it is not there.
+static void *fetch(const char *rel, size_t *n) {
+    char path[4096];
+    if (strncmp(rel, "test/", 5)) return NULL;
+    snprintf(path, sizeof path, "%s/%s", dir, rel + 5);
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fclose(f);
+    return load(rel + 5, n);
+}
+
+// The area's static compound for the test's placements: one file, test/compound.bphsc, whatever the prefix asks.
+static const char *list(const char *prefix, int i) {
+    return !strncmp(prefix, "Phive/StaticCompoundBody/", 25) && i == 0 ? "test/compound.bphsc" : NULL;
+}
+
+// Runs edits[0..n) on file; ok must come out as want. Returns the edited file (or NULL); sizes holds what each edit
+// reported of a member's size.
+static RestoreMemberSize sizes[32];
 static void *run(const char *what, const RestoreEdit *edits, int n, const void *in, size_t size, const void *dic,
                  size_t dic_n, const int *want, size_t *out_n) {
     const RestoreEdit *ptr[32];
     int ok[32];
     for (int k = 0; k < n; k++) ptr[k] = &edits[k];
     printf("%s\n", what);
-    void *out = restore_file(ptr, n, in, size, dic, dic_n, ok, note, (void *)what, out_n);
+    void *out = restore_file(ptr, n, in, size, dic, dic_n, fetch, list, ok, sizes, note, (void *)what, out_n);
     int any = 0;
     for (int k = 0; k < n; k++) {
         CHECK(ok[k] == want[k], "%s: edit %d %s", what, k, want[k] ? "should apply" : "should be skipped");
+        CHECK(!sizes[k].now || ok[k], "%s: edit %d reported a member's size but did not apply", what, k);
+        CHECK(!ok[k] || edits[k].kind != RESTORE_KIND_ADD_MEMBER || (!sizes[k].was && sizes[k].now),
+              "%s: edit %d added a member but did not report its size", what, k);
         any |= ok[k];
     }
     CHECK(!out == !any, "%s: a file came back although no edit applied, or none although one did", what);
@@ -90,6 +115,37 @@ static void *run(const char *what, const RestoreEdit *edits, int n, const void *
 }
 
 #define F "test/place.bcett.byml.zs"
+
+// The engine on 1000 damaged copies of raw[0..raw_n) (an unpacked placement) with edits[0..n): never a crash, and a
+// file comes back only when an edit applied and it reads as a BYML (on every failure nothing is served and the game
+// reads its own file).
+static void engine_damage(const char *what, const RestoreEdit *edits, int n, const uint8_t *raw, size_t raw_n,
+                          uint32_t *seed) {
+    const RestoreEdit *ptrs[32];
+    int oks[32], served = 0;
+    uint8_t *bad = malloc(raw_n);
+    for (int k = 0; k < n; k++) ptrs[k] = &edits[k];
+    for (int round = 0; round < 1000; round++) {
+        memcpy(bad, raw, raw_n);
+        for (int j = 0; j < 4; j++) {
+            *seed = *seed * 1103515245u + 12345u;
+            bad[(*seed >> 8) % raw_n] ^= (uint8_t)(1u << (*seed & 7));
+        }
+        size_t en;
+        uint8_t *e = restore_file(ptrs, n, bad, raw_n, NULL, 0, fetch, list, oks, NULL, NULL, NULL, &en);
+        int any = 0;
+        for (int k = 0; k < n; k++) any |= oks[k];
+        CHECK(!e == !any, "damaged %s %d: a file came back with no edit applied, or none with one", what, round);
+        Byml b;
+        const char *why;
+        if (e && byml_parse(&b, e, en, &why)) byml_free(&b);
+        else CHECK(!e, "damaged %s %d: the edited file does not parse (%s)", what, round, why);
+        served += e != NULL;
+        free(e);
+    }
+    free(bad);
+    printf("engine: %d of 1000 damaged %s edited\n", served, what);
+}
 
 static void placement(void) {
     size_t n, dn, out_n;
@@ -172,34 +228,118 @@ static void placement(void) {
     }
     printf("parser: %zu cut lengths refused, %d of 3000 damaged copies read and written back the same\n", raw_n,
            damaged);
-    // The engine on damaged copies of the unpacked placement: never a crash, and a file comes back only when an edit
-    // applied and it reads as a BYML (on every failure nothing is served and the game reads its own file).
-    enum { NE = sizeof edits / sizeof *edits };
-    const RestoreEdit *ptrs[NE];
-    int oks[NE], served = 0;
-    for (int k = 0; k < NE; k++) ptrs[k] = &edits[k];
-    for (int round = 0; round < 1000; round++) {
-        memcpy(bad, raw, raw_n);
-        for (int j = 0; j < 4; j++) {
-            seed = seed * 1103515245u + 12345u;
-            bad[(seed >> 8) % raw_n] ^= (uint8_t)(1u << (seed & 7));
-        }
-        size_t en;
-        uint8_t *e = restore_file(ptrs, NE, bad, raw_n, NULL, 0, oks, NULL, NULL, &en);
-        int any = 0;
-        for (int k = 0; k < NE; k++) any |= oks[k];
-        CHECK(!e == !any, "damaged placement %d: a file came back with no edit applied, or none with one", round);
-        Byml b;
-        const char *why;
-        if (e && byml_parse(&b, e, en, &why)) byml_free(&b);
-        else CHECK(!e, "damaged placement %d: the edited file does not parse (%s)", round, why);
-        served += e != NULL;
-        free(e);
-    }
-    printf("engine: %d of 1000 damaged placements edited\n", served);
+    engine_damage("placements", edits, (int)(sizeof edits / sizeof *edits), raw, raw_n, &seed);
     free(bad);
     free(raw);
     free(out);
+    free(in);
+    free(dic);
+}
+
+// The placement unpacked (malloc'd): the fixture is packed with the second dictionary of zsdic.sarc.
+static uint8_t *placement_raw(const uint8_t *in, size_t n, const uint8_t *dic, size_t dn, size_t *raw_n) {
+    const char *name;
+    size_t at, len;
+    unsigned long long cs = ZSTD_getFrameContentSize(in, n);
+    uint8_t *raw = malloc((size_t)cs);
+    ZSTD_DCtx *d = ZSTD_createDCtx();
+    CHECK(sarc_at(dic, dn, 1, &name, &at, &len), "zsdic: no second member");
+    *raw_n = ZSTD_decompress_usingDict(d, raw, (size_t)cs, in, n, dic + at, len);
+    ZSTD_freeDCtx(d);
+    if (ZSTD_isError(*raw_n) || *raw_n != cs) {
+        printf("FAIL: the placement fixture does not unpack\n");
+        exit(1);
+    }
+    return raw;
+}
+
+// The kinds that remove, copy (from this file and from another), set text and add keys, on the placement; the script
+// checks the tree.
+static void placement_kinds(void) {
+    size_t n, dn, out_n;
+    uint8_t *in = load("place.byml.zs", &n), *dic = load("zsdic.sarc", &dn);
+    static const RestoreEdit edits[] = {
+        RESTORE_REMOVE(F, "Obj_A", 1001, 1, 2, 3),                               // 0 applies
+        RESTORE_REMOVE(F, "Obj_B", 1003, 7, 8, 9),                               // 1 another object under that hash
+        RESTORE_REMOVE(F, "Obj_A", 1003, 7, 8, 9.5),                             // 2 elsewhere
+        RESTORE_REMOVE(F, "Obj_Z", 4242, 0, 0, 0),                               // 3 not there
+        RESTORE_ADD(F, "Obj_B", 1002, 4, 5, 6, 2002, 10, 20, 30, 0, 3, 0),       // 4 applies
+        RESTORE_ADD(F, "Obj_B", 1002, 4, 5, 6, 1003, 0, 0, 0, 0, 0, 0),          // 5 the new Hash is taken
+        RESTORE_ADD_FROM(F, "test/src.byml", "Obj_S", 5001, 1, 1, 1, 6001, 9, 9, 9, 0, 0.5, 0),   // 6 applies
+        RESTORE_SET(F, "Obj_S", 6001, 9, 9, 9, "Dynamic/Room", 24, 17),          // 7 applies, on the copy
+        RESTORE_ADD_FROM(F, "test/src.byml", "Obj_S", 5001, 1, 1, 2, 6002, 0, 0, 0, 0, 0, 0),   // 8 elsewhere there
+        RESTORE_ADD_FROM(F, "test/none.byml", "Obj_S", 5001, 1, 1, 1, 6003, 0, 0, 0, 0, 0, 0),  // 9 no such file
+        RESTORE_ADD_FROM(F, "test/src.byml", "Obj_A", 1001, 1, 2, 3, 6004, 0, 0, 0, 0, 0, 0),   // 10 not placed there
+        RESTORE_SET_TEXT(F, "Obj_A", 1003, 7, 8, 9, "Name", NULL, "Added"),      // 11 applies: a new key
+        RESTORE_SET_MEMBER_TEXT(F, NULL, "FilePath", "Work/Banc/Scene/Test.bcett.json", "Work/Other.json"),   // 12
+        RESTORE_SET_MEMBER_TEXT(F, NULL, "Misc/Unicode", "Ж", "x"),               // 13 not the text expected
+        RESTORE_SET_TEXT(F, "Obj_A", 1003, 7, 8, 9, "Dynamic/Count", "5", "6"),  // 14 not a text
+        RESTORE_SET_NEW(F, "Obj_A", 1003, 7, 8, 9, "Dynamic/Extra", BYML_FLOAT, 2.5),   // 15 applies
+        RESTORE_SET_NEW(F, "Obj_A", 1003, 7, 8, 9, "Dynamic/Count", BYML_INT, 9),       // 16 there already
+        RESTORE_SET_NEW(F, "Obj_A", 1003, 7, 8, 9, "Nope/Extra", BYML_INT, 9),          // 17 no dict to add to
+        RESTORE_SET_NEW(F, "Obj_A", 1003, 7, 8, 9, "Translate/3", BYML_FLOAT, 1),      // 18 arrays do not grow
+        RESTORE_SET_MEMBER_NEW(F, NULL, "Misc/Flag", BYML_BOOL, 1),               // 19 applies, on the root
+        RESTORE_SET_TEXT(F, "Obj_A", 1003, 7, 8, 9, "Name", NULL, "Again"),      // 20 there now (11 added it)
+        RESTORE_SET_MEMBER_NEW(F, NULL, "Misc/Aaa", BYML_INT, 3),                 // 21 applies: sorts first in Misc
+        RESTORE_SET_NEW(F, "Obj_A", 1003, 7, 8, 9, "Dynamic/Text", BYML_STRING, 1),     // 22 a new key's text is SET_TEXT
+    };
+    static const int want[] = {1, 0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0};
+    _Static_assert(sizeof want / sizeof *want == sizeof edits / sizeof *edits, "one expectation per edit");
+    void *out = run("placement, other kinds", edits, (int)(sizeof edits / sizeof *edits), in, n, dic, dn, want, &out_n);
+    if (out) save("place2.out.zs", out, out_n);
+    // The same edits again on what they made: each finds its work done and skips.
+    if (out) {
+        const RestoreEdit again[] = {edits[0], edits[4], edits[6], edits[11], edits[15], edits[19]};
+        static const int none[] = {0, 0, 0, 0, 0, 0};
+        size_t n2;
+        free(run("placement, other kinds again", again, 6, out, out_n, dic, dn, none, &n2));
+    }
+    free(out);
+    size_t raw_n;
+    uint8_t *raw = placement_raw(in, n, dic, dn, &raw_n);
+    uint32_t seed = 4321;
+    engine_damage("placements (other kinds)", edits, (int)(sizeof edits / sizeof *edits), raw, raw_n, &seed);
+    // byml_append takes items into arrays and keyed into dicts only (a hash dict's item would have no hash), and keeps
+    // a dict's keys in order.
+    Byml pb;
+    const char *pwhy;
+    if (byml_parse(&pb, raw, raw_n, &pwhy)) {
+        BymlNode *hashes = byml_path(&pb.root, "Misc/Hashes"), *misc = byml_get(&pb.root, "Misc");
+        BymlNode *flt = byml_path(&pb.root, "Misc/Float"), item = {.type = BYML_INT};
+        CHECK(hashes && hashes->type == BYML_HASH32 && !byml_append(hashes, "k", item), "a hash dict took an item");
+        CHECK(misc && !byml_append(misc, NULL, item), "a dict took an item without a key");
+        CHECK(flt && !byml_append(flt, NULL, item), "a number took an item");
+        static const char *const keys[] = {"Zz", "Added", "Int", "A"};   // after the last, inside, a key it has, first
+        for (int i = 0; misc && i < 4; i++) CHECK(byml_append(misc, keys[i], item), "a dict refused the key %s", keys[i]);
+        for (uint32_t i = 1; misc && i < misc->n; i++)
+            CHECK(strcmp(misc->keys[i - 1], misc->keys[i]) < 0, "byml_append: %s before %s", misc->keys[i - 1],
+                  misc->keys[i]);
+        CHECK(misc && byml_get(misc, "Int") && byml_get(misc, "Int")->type == BYML_INT && byml_get(misc, "Int")->bits == 0,
+              "byml_append did not replace the item of a key the dict has");
+        byml_free(&pb);
+    } else {
+        CHECK(0, "placement: the unpacked fixture does not parse (%s)", pwhy);
+    }
+    free(raw);
+    free(in);
+    free(dic);
+}
+
+// A copy's Hash against the area's other placement file (test/area_Dynamic.bcett.byml.zs places 7001), and removals
+// against the area's static compound (test/compound.bphsc holds 1003).
+#define AREA "test/area_Static.bcett.byml.zs"
+static void area_copies(void) {
+    size_t n, dn, out_n;
+    uint8_t *in = load("place.byml.zs", &n), *dic = load("zsdic.sarc", &dn);
+    static const RestoreEdit edits[] = {
+        RESTORE_ADD(AREA, "Obj_B", 1002, 4, 5, 6, 7001, 0, 0, 0, 0, 0, 0),   // 0 the Dynamic file has 7001
+        RESTORE_ADD(AREA, "Obj_B", 1002, 4, 5, 6, 7002, 0, 0, 0, 0, 0, 0),   // 1 applies
+        RESTORE_ADD(AREA, "Obj_B", 1002, 4, 5, 6, 1001, 0, 0, 0, 0, 0, 0),   // 2 this file has 1001
+        RESTORE_REMOVE(AREA, "Obj_A", 1003, 7, 8, 9),                          // 3 the compound holds its collision
+        RESTORE_REMOVE(AREA, "Obj_A", 1001, 1, 2, 3),                          // 4 applies
+    };
+    static const int want[] = {0, 1, 0, 0, 1};
+    free(run("placement, copies and removals in an area", edits, 5, in, n, dic, dn, want, &out_n));
     free(in);
     free(dic);
 }
@@ -209,6 +349,8 @@ static void placement(void) {
 
 // sarc_at, sarc_find and sarc_replace on p[0..n), a copy of exactly n bytes (so the sanitizer sees a read past it):
 // what they give lies inside, and a replace that succeeds holds the new bytes.
+static int sarc_adds;   // copies sarc_add took a new member into
+
 static int sarc_try(const uint8_t *p, size_t n) {
     static uint8_t small[16], big[600];
     for (size_t i = 0; i < sizeof big; i++) big[i] = (uint8_t)(i * 7), small[i % sizeof small] = (uint8_t)i;
@@ -230,6 +372,14 @@ static int sarc_try(const uint8_t *p, size_t n) {
               "damaged pack: a replace does not hold the new bytes");
         free(o);
     }
+    uint8_t *o = sarc_add(q, n, "N/new.bin", small, sizeof small, 8, &out_n, &why);
+    if (o) {
+        sarc_adds++;
+        CHECK(sarc_find(o, out_n, "N/new.bin", &at, &len, &why) && len == sizeof small && !memcmp(o + at, small, len) &&
+                  at % 8 == 0,
+              "damaged pack: an add does not hold the new bytes at an 8-aligned offset");
+        free(o);
+    }
     free(q);
     return replaced;
 }
@@ -238,6 +388,7 @@ static int sarc_try(const uint8_t *p, size_t n) {
 static void sarc_damage(const uint8_t *raw, size_t raw_n) {
     int cut_ok = 0, flipped_ok = 0;
     for (size_t cut_n = 0; cut_n < raw_n; cut_n++) cut_ok += sarc_try(raw, cut_n) > 0;
+    int cut_adds = sarc_adds;
     uint8_t *bad = malloc(raw_n);
     uint32_t seed = 777;
     size_t head = raw_n < 0x100 ? raw_n : 0x100;
@@ -250,7 +401,8 @@ static void sarc_damage(const uint8_t *raw, size_t raw_n) {
         flipped_ok += sarc_try(bad, raw_n) > 0;
     }
     free(bad);
-    printf("sarc: %d of %zu cut lengths and %d of 3000 damaged copies replaced a member\n", cut_ok, raw_n, flipped_ok);
+    printf("sarc: %d of %zu cut lengths and %d of 3000 damaged copies replaced a member, %d and %d added one\n", cut_ok,
+           raw_n, flipped_ok, cut_adds, sarc_adds - cut_adds);
 }
 
 static void pack(void) {
@@ -283,6 +435,105 @@ static void pack(void) {
     free(raw);
     free(in);
 }
+
+// Members added to a pack; the script checks the archive.
+static void pack_more(void) {
+    size_t n, out_n;
+    uint8_t *in = load("pack.zs", &n);
+    static const uint8_t declared[] = {'n', 'e', 'w', 0, 1, 2, 3};
+    static const RestoreEdit edits[] = {
+        RESTORE_ADD_MEMBER(P, "D/new.bin", declared),                            // 0 applies
+        RESTORE_COPY_MEMBER(P, "E/copy.bgyml", NULL, "C/three.bgyml"),          // 1 applies, from this pack
+        RESTORE_COPY_MEMBER(P, "F/other.bgyml", "test/pack2.zs", "X/x.bgyml"),  // 2 applies, from another
+        RESTORE_ADD_MEMBER(P, "A/one.bgyml", declared),                          // 3 the pack has it
+        RESTORE_COPY_MEMBER(P, "G/none.bgyml", NULL, "Z/none.bgyml"),           // 4 nothing to copy
+        RESTORE_COPY_MEMBER(P, "H/none.bgyml", "test/none.zs", "X/x.bgyml"),    // 5 no such pack
+        RESTORE_SET_MEMBER(P, "E/copy.bgyml", "Params/Count", 4, 8),            // 6 applies, on the member added
+        RESTORE_SET_MEMBER_TEXT(P, "C/three.bgyml", "Params/Name", NULL, "liftable"),   // 7 applies: a new key
+    };
+    static const int want[] = {1, 1, 1, 0, 0, 0, 1, 1};
+    void *out = run("pack, members added", edits, 8, in, n, NULL, 0, want, &out_n);
+    if (out) save("pack2.out.zs", out, out_n);
+    // the added members report their sizes; the first edit of each member rewritten reports it before and after (7
+    // adds a key: the member grew, which romfs.c raises the member's own resource size entry for)
+    CHECK(sizes[1].now && sizes[6].was == sizes[1].now && sizes[6].now >= sizes[6].was, "pack: the added member's sizes");
+    CHECK(sizes[7].was && sizes[7].now > sizes[7].was, "pack: the member that grew: %zu -> %zu", sizes[7].was,
+          sizes[7].now);
+    free(out);
+    // Names that outgrow the room before the data: the data moves, every member keeps its alignment.
+    size_t raw_n, cur_n;
+    uint8_t *raw = unzstd(in, n, &raw_n);
+    const char *why;
+    for (int i = 0; i < 6; i++) {
+        char name[160];
+        snprintf(name, sizeof name, "Long/%d/%0120d.bgyml", i, i);
+        uint8_t *next = sarc_add(raw, raw_n, name, declared, sizeof declared, i % 2 ? 0x100 : 8, &cur_n, &why);
+        CHECK(next != NULL, "long name %d: %s", i, next ? "" : why);
+        if (!next) break;
+        free(raw);
+        raw = next, raw_n = cur_n;
+    }
+    save("grown2.sarc", raw, raw_n);
+    CHECK(!sarc_add(raw, raw_n, "A/one.bgyml", declared, 1, 8, &cur_n, &why), "a member the pack has was added");
+    free(raw);
+    free(in);
+}
+
+#define T "test/text.zs"
+#define NAVI "Msg/Navi.msbt"
+
+// Messages replaced in a text archive's MSBT members; the script checks every message (TEXT_HASHES holds these hashes).
+static void messages(void) {
+    size_t n, out_n;
+    uint8_t *in = load("text.zs", &n);
+    static const RestoreEdit edits[] = {
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_A", 0xa07a3f64afb3b6e0ull,
+                            "{0.3:0000}Dark One{0.3:ffff}\nConquer yourself!"),                    // 0 applies
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_A", 0xa07a3f64afb3b6e0ull,
+                            "{0.3:0000}Dark One{0.3:ffff}\nConquer yourself!"),                    // 1 that already
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_B", 0x1234ull, "x"),                                   // 2 another message
+        RESTORE_SET_MESSAGE(T, NAVI, "Nope", 0xa07a3f64afb3b6e0ull, "x"),                          // 3 no such label
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_C", 0x25f7f232d73044d2ull, "{0.3"),                    // 4 a tag cut short
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_C", 0x25f7f232d73044d2ull,
+                            "自分自身に{1.2:0a0b}打ち勝つ{/1.2}！"),                                // 5 applies
+        RESTORE_SET_MEMBER(T, NAVI, "X", 1, 2),                                                    // 6 not a BYML
+        RESTORE_SET_MESSAGE(T, "A/one.bgyml", "Enemy_A", 0xa07a3f64afb3b6e0ull, "x"),              // 7 not an MSBT
+        RESTORE_SET_MESSAGE(T, "Msg/Wide.msbt", "W0", 0x7ab759bfc5845b1bull,
+                            "Wide {0.3:0000}ж{0.3:ffff} 😀\nline"),                                // 8 applies, UTF-16
+        RESTORE_SET_MESSAGE(T, NAVI, "Plain", 0xe801dbf933a05e5dull, ""),                          // 9 applies, empty
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_B", 0x410786bdd54ba4d3ull, "a } alone"),               // 10 bad markup
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_B", 0x410786bdd54ba4d3ull, "{0.3:00g0}"),              // 11 not hex
+        RESTORE_SET_MESSAGE(T, NAVI, "Enemy_B", 0x410786bdd54ba4d3ull, "{/0.3:00}"),               // 12 closing, params
+    };
+    static const int want[] = {1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0};
+    _Static_assert(sizeof want / sizeof *want == sizeof edits / sizeof *edits, "one expectation per edit");
+    void *out = run("text archive", edits, (int)(sizeof edits / sizeof *edits), in, n, NULL, 0, want, &out_n);
+    if (out) save("text.out.zs", out, out_n);
+    free(out);
+    // cut and damaged message files are refused, not read past their end
+    size_t raw_n, at, len, got;
+    uint8_t *raw = unzstd(in, n, &raw_n), *res;
+    const char *why;
+    uint64_t found;
+    CHECK(sarc_find(raw, raw_n, NAVI, &at, &len, &why), "text archive: no %s", NAVI);
+    for (size_t cut = 0; cut < len; cut++) {
+        MsbtResult r = msbt_set_message(raw + at, cut, "Enemy_A", 0xa07a3f64afb3b6e0ull, "x", &res, &got, &found, &why);
+        CHECK(r == MSBT_FAILED && !res, "a message file cut at %zu was edited", cut);
+        free(res);
+    }
+    uint8_t *bad = malloc(len);
+    for (size_t i = 0; i < len; i++) {   // one byte changed at a time: refused or edited, never read past
+        memcpy(bad, raw + at, len);
+        bad[i] ^= 0xa5;
+        MsbtResult r = msbt_set_message(bad, len, "Enemy_A", 0xa07a3f64afb3b6e0ull, "x", &res, &got, &found, &why);
+        CHECK((r == MSBT_SET) == (res != NULL), "a message file changed at %zu: an edit without a file, or one", i);
+        free(res);
+    }
+    free(bad);
+    free(raw);
+    free(in);
+}
+
 
 static void others(void) {
     size_t n, out_n, dn;
@@ -356,7 +607,8 @@ static void order(void) {
         int ok;
         uint8_t *p = dict_file(BYML_DICT, 40000, mode, &n);
         clock_t t0 = clock();
-        void *out = restore_file(ptr, 1, p, n, NULL, 0, &ok, note, mode ? "reversed dict" : "sorted dict", &out_n);
+        void *out = restore_file(ptr, 1, p, n, NULL, 0, NULL, NULL, &ok, NULL, note, mode ? "reversed dict" : "sorted dict",
+                                 &out_n);
         double ms = (double)(clock() - t0) * 1000 / CLOCKS_PER_SEC;
         CHECK(mode ? !out && !ok : out && ok, "a dict of 40000 keys %s", mode ? "in reverse order was edited" : "was not edited");
         printf("order: a dict of 40000 keys %s in %.0f ms\n", mode ? "in reverse order refused" : "in order edited", ms);
@@ -369,7 +621,7 @@ static void order(void) {
 // runtime stubbed here (the settings, the log, the RomFS)
 
 static const RestoreEdit t_place[] = {
-    RESTORE_SET(F, "Obj_A", 1003, 7, 8, 9, "Scale/1", 2, 5),
+    RESTORE_REMOVE(F, "Obj_A", 1001, 1, 2, 3),
     RESTORE_SET(F, "Obj_B", 1002, 4, 5, 6, "Rotate/1", 1.5, 3),
 };
 static const RestoreEdit t_pack[] = {RESTORE_SET_MEMBER(P, ONE, "MoveSpeed", 0.15, 0.2)};
@@ -377,6 +629,7 @@ static const RestoreEdit t_missing[] = {RESTORE_SET("test/missing.bcett.byml", "
 RESTORATION(t_place, "TEST_PLACE", "Place", "Two edits of the placement.", t_place);
 RESTORATION(t_pack, "TEST_PACK", "Pack", "An edit of a pack member.", t_pack);
 RESTORATION(t_missing, "TEST_MISSING", "Missing", "An edit of a file the RomFS lacks.", t_missing);
+RESTORATION_CODE(t_code, "TEST_CODE", "Code", "Code, no file edits.");
 
 static struct { char name[64], value[8]; } settings[8];
 static int nsettings, logged, reads, serves, serve_fails;
@@ -441,6 +694,8 @@ static void *t_read(const char *rel, size_t *n) {
 
 void *romfs_read_served(const char *rel, size_t *n) { return t_read(rel, n); }
 
+const char *romfs_with(const char *prefix, int i) { return list(prefix, i); }
+
 static int t_serve(const char *rel, void *out, size_t n) {
     (void)rel, (void)n;
     serves++;
@@ -456,9 +711,17 @@ static const Restoration *by_key(const char *key) {
 
 static void switches(void) {
     printf("switches\n");
-    CHECK(restore_count() == 3 && !strcmp(restore_at(0)->key, "TEST_MISSING") &&
-              !strcmp(restore_at(2)->key, "TEST_PLACE") && !restore_at(3),
-          "the registry: %d restorations, not the three sorted by key", restore_count());
+    CHECK(restore_count() == 4 && !strcmp(restore_at(0)->key, "TEST_CODE") &&
+              !strcmp(restore_at(3)->key, "TEST_PLACE") && !restore_at(4),
+          "the registry: %d restorations, not the four sorted by key", restore_count());
+    // A code restoration: the switch by its key, read at each call; no edits, nothing counted at start.
+    const Restoration *code = by_key("TEST_CODE");
+    CHECK(code && code->code && !code->nedits && !restore_key_on("TEST_CODE") && !restore_key_on("TEST_NONE"),
+          "TEST_CODE: not a code restoration, or on before its switch");
+    cfg_set("NX2NAVI_RESTORE_TEST_CODE", "1");
+    CHECK(restore_key_on("TEST_CODE"), "TEST_CODE: restore_key_on does not follow its switch");
+    cfg_set("NX2NAVI_RESTORE_TEST_CODE", "0");
+    CHECK(!restore_key_on("TEST_CODE"), "TEST_CODE: restore_key_on does not follow its switch off");
     const Restoration *place = by_key("TEST_PLACE"), *pk = by_key("TEST_PACK"), *missing = by_key("TEST_MISSING");
     if (!place || !pk || !missing) return;
     int a, s;
@@ -487,23 +750,213 @@ static void switches(void) {
     restore_apply(t_read, t_serve);
     restore_started(place, &a, &s);
     CHECK(!a && s == 2 && serves == 2, "TEST_PLACE not served: %d applied, %d skipped, %d serves", a, s, serves);
-    // --probe-restore: every restoration, switched on or not, nothing served; 1 as the missing file's edit is skipped.
-    CHECK(restore_probe() == 1 && serves == 2, "probe: did not fail on the skipped edit, or served a file");
+    // The pack members a start rewrote are of that start alone: listed with the pack's edit on, gone with it off.
+    const char *mp;
+    size_t mw, mn;
+    int md;
+    CHECK(!restore_member(0, &mp, &mw, &mn, &md), "a start without the pack's edit lists a member");
+    serve_fails = 0;
+    restore_set(pk, 1);
     restore_apply(t_read, t_serve);
-    CHECK(serves == 2, "a start after the probe served a file");
+    CHECK(serves == 4 && restore_member(0, &mp, &mw, &mn, &md) && !strcmp(mp, ONE) && mw && mn && !md &&
+              !restore_member(1, &mp, &mw, &mn, &md),
+          "TEST_PACK on: %d serves, the member it rewrote is not the one member listed", serves);
+    restore_set(pk, 0);
+    restore_apply(t_read, t_serve);
+    CHECK(serves == 5 && !restore_member(0, &mp, &mw, &mn, &md), "TEST_PACK off again: the start still lists a member");
+    // --probe-restore: every restoration, switched on or not, nothing served; 1 as the missing file's edit is skipped.
+    CHECK(restore_probe() == 1 && serves == 5, "probe: did not fail on the skipped edit, or served a file");
+    restore_apply(t_read, t_serve);
+    CHECK(serves == 5, "a start after the probe served a file");
+}
+
+#define GP "test/graph.zs"
+#define GM "AI/Test.module.ainb"
+#define GT_FILE "test/tmpl.zs"
+#define GT_MEMBER "AI/Other.module.ainb"
+
+// Runs edits[0..n) expecting none to apply and the file to come back as it was.
+static void refused(const char *what, const RestoreEdit *edits, int n, const void *in, size_t size) {
+    static const int none[32];
+    size_t out_n;
+    void *out = run(what, edits, n, in, size, NULL, 0, none, &out_n);
+    CHECK(!out, "%s: a file came back", what);
+    free(out);
+}
+
+// Logic graph edits on the graph of tests/restore_check.py's graph_fixture (a pack member and a loose file); the
+// script checks every node and section of the results.
+static void graphs(void) {
+    size_t n, out_n, ln;
+    uint8_t *in = load("graph.zs", &n), *loose = load("graph.ainb", &ln);
+    static const RestoreEdit edits[] = {
+        RESTORE_GRAPH_FIND(GP, GM, "eq", "QueryTestEqualS32", "S32Base=5;S32<-bb:Count"),             // 0 node 2
+        RESTORE_GRAPH_FIND(GP, GM, "sel", "BoolSelector", "Input<-@eq.Bool;#1"),                      // 1 node 1
+        RESTORE_GRAPH_FIND(GP, GM, "set", "ExecuteTestSetS32", "BlackboardKey=Count;ExecuteOnce=true"), // 2 node 3
+        RESTORE_GRAPH_FIND(GP, GM, "player", "QueryTestPlayer", "#6"),                                // 3
+        RESTORE_GRAPH_SET(GP, GM, "set", "Mode", "1", "3"),                                           // 4 a property
+        RESTORE_GRAPH_SET(GP, GM, "eq", "S32Base", "5", "9"),                                         // 5 an input
+        RESTORE_GRAPH_ADD(GP, GM, "len", "QueryTestLength", "", NULL, NULL),                          // 6 node 9
+        RESTORE_GRAPH_ADD(GP, GM, "less", "QueryTestLessF32", "F32Base=0.5", NULL, NULL),             // 7 node 10
+        RESTORE_GRAPH_ADD(GP, GM, "far", "QueryTestFar", "Kind=Near", GT_FILE, GT_MEMBER),                            // 8 node 11
+        RESTORE_GRAPH_SET(GP, GM, "less", "F32Base", "0.5", "0.3"),                                   // 9 the new node
+        RESTORE_GRAPH_SET(GP, GM, "set", "BlackboardKey", "Count", "Total"),                          // 10 a new string
+        RESTORE_GRAPH_LINK(GP, GM, "player", "Velocity", "len", "Vector", "=1,2,3"),                  // 11 vec3
+        RESTORE_GRAPH_LINK(GP, GM, "len", "Length", "less", "F32", "=0"),                             // 12
+        RESTORE_GRAPH_LINK(GP, GM, "less", "Bool", "sel", "Input", "@eq.Bool"),                       // 13 replaces one
+        RESTORE_GRAPH_LINK(GP, GM, "far", "Value", "set", "S32", "=0"),                               // 14
+        RESTORE_GRAPH_FIND(GP, GM, "multi", "ExecuteTestMulti", "#7"),                                // 15
+        RESTORE_GRAPH_FIND(GP, GM, "eq2", "QueryTestEqualS32", "S32Base=7"),                          // 16 node 8
+        RESTORE_GRAPH_LINK(GP, GM, "eq2", "Bool", "multi", "BoolMulti", "+#2.Bool,#5.Bool"),          // 17 one more
+        RESTORE_GRAPH_LINK(GP, GM, "eq2", "Bool", "sel", "Input", "+#10.Bool"),                       // 18 now several
+    };
+    static const int all[] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+    _Static_assert(sizeof all / sizeof *all == sizeof edits / sizeof *edits, "one expectation per edit");
+    void *out = run("graph", edits, (int)(sizeof edits / sizeof *edits), in, n, NULL, 0, all, &out_n);
+    if (out) save("graph.out.zs", out, out_n);
+    free(out);
+    // the file is the graph
+    static const RestoreEdit lo[] = {
+        RESTORE_GRAPH_FIND("test/graph.ainb", NULL, "eq", "QueryTestEqualS32", "S32Base=7"),
+        RESTORE_GRAPH_SET("test/graph.ainb", NULL, "eq", "S32", "1", "-4"),
+    };
+    out = run("loose graph", lo, 2, loose, ln, NULL, 0, all, &out_n);
+    if (out) save("graph.out.ainb", out, out_n);
+    free(out);
+
+    // what is refused: each alone, and nothing of the graph changes
+    static const RestoreEdit unknown[] = {RESTORE_GRAPH_FIND(GP, GM, "x", "QueryTestNope", "")};
+    static const RestoreEdit nomatch[] = {RESTORE_GRAPH_FIND(GP, GM, "x", "QueryTestEqualS32", "S32Base=6")};
+    static const RestoreEdit twice[] = {RESTORE_GRAPH_FIND(GP, GM, "x", "QueryTestEqualS32", "")};
+    static const RestoreEdit badkey[] = {RESTORE_GRAPH_FIND(GP, GM, "x", "QueryTestEqualS32", "Nope=5")};
+    static const RestoreEdit was[] = {RESTORE_GRAPH_FIND(GP, GM, "set", "ExecuteTestSetS32", ""),
+                                      RESTORE_GRAPH_SET(GP, GM, "set", "Mode", "2", "3")};
+    static const RestoreEdit already[] = {RESTORE_GRAPH_FIND(GP, GM, "set", "ExecuteTestSetS32", ""),
+                                          RESTORE_GRAPH_SET(GP, GM, "set", "Mode", "3", "1")};
+    static const RestoreEdit text[] = {RESTORE_GRAPH_FIND(GP, GM, "set", "ExecuteTestSetS32", ""),
+                                       RESTORE_GRAPH_SET(GP, GM, "set", "Mode", "1", "three")};
+    static const RestoreEdit linked[] = {RESTORE_GRAPH_FIND(GP, GM, "sel", "BoolSelector", ""),
+                                         RESTORE_GRAPH_SET(GP, GM, "sel", "Input", "false", "true")};
+    static const RestoreEdit bound[] = {RESTORE_GRAPH_FIND(GP, GM, "eq", "QueryTestEqualS32", "#2"),
+                                        RESTORE_GRAPH_SET(GP, GM, "eq", "S32", "0", "1")};
+    static const RestoreEdit linkwas[] = {RESTORE_GRAPH_FIND(GP, GM, "p", "QueryTestPlayer", ""),
+                                          RESTORE_GRAPH_FIND(GP, GM, "len", "QueryTestLength", ""),
+                                          RESTORE_GRAPH_LINK(GP, GM, "p", "Velocity", "len", "Vector", "=0,0,0")};
+    static const RestoreEdit linktype[] = {RESTORE_GRAPH_FIND(GP, GM, "p", "QueryTestPlayer", ""),
+                                           RESTORE_GRAPH_FIND(GP, GM, "sel", "BoolSelector", ""),
+                                           RESTORE_GRAPH_LINK(GP, GM, "p", "Velocity", "sel", "Input", "#2.Bool")};
+    static const RestoreEdit unnamed[] = {RESTORE_GRAPH_SET(GP, GM, "ghost", "Mode", "1", "3")};
+    static const RestoreEdit children[] = {RESTORE_GRAPH_ADD(GP, GM, "x", "Simultaneous", "", GT_FILE, GT_MEMBER)};
+    static const RestoreEdit theirbb[] = {RESTORE_GRAPH_ADD(GP, GM, "x", "QueryTestEqualS32", "", GT_FILE, GT_MEMBER)};
+    static const RestoreEdit tmplnope[] = {RESTORE_GRAPH_ADD(GP, GM, "x", "QueryTestNope", "", GT_FILE, GT_MEMBER)};
+    static const RestoreEdit nofile[] = {RESTORE_GRAPH_ADD(GP, GM, "x", "QueryTestFar", "", "test/none.zs", GM)};
+    static const RestoreEdit notgraph[] = {RESTORE_GRAPH_FIND(GP, "A/one.bgyml", "x", "QueryTestFar", "")};
+    static const RestoreEdit notbyml[] = {RESTORE_SET_MEMBER(GP, GM, "MoveSpeed", 0.15, 1)};
+    static const RestoreEdit plus[] = {RESTORE_GRAPH_FIND(GP, GM, "multi", "ExecuteTestMulti", ""),
+                                       RESTORE_GRAPH_FIND(GP, GM, "eq2", "QueryTestEqualS32", "S32Base=7"),
+                                       RESTORE_GRAPH_LINK(GP, GM, "eq2", "Bool", "multi", "BoolMulti", "+#2.Bool")};
+    static const RestoreEdit half[] = {RESTORE_GRAPH_FIND(GP, GM, "set", "ExecuteTestSetS32", ""),
+                                       RESTORE_GRAPH_SET(GP, GM, "set", "Mode", "1", "3"),
+                                       RESTORE_GRAPH_FIND(GP, GM, "x", "QueryTestNope", "")};
+#define REFUSED(what, e) refused(what, e, (int)(sizeof e / sizeof *e), in, n)
+    REFUSED("graph: a type it lacks", unknown);
+    REFUSED("graph: no node matches", nomatch);
+    REFUSED("graph: two nodes match", twice);
+    REFUSED("graph: a parameter the node lacks", badkey);
+    REFUSED("graph: another value", was);
+    REFUSED("graph: the value already", already);
+    REFUSED("graph: not a number", text);
+    REFUSED("graph: a connected input", linked);
+    REFUSED("graph: a bound input", bound);
+    REFUSED("graph: another connection", linkwas);
+    REFUSED("graph: an output of another type", linktype);
+    REFUSED("graph: a name no edit gave", unnamed);
+    REFUSED("graph: a node with children", children);
+    REFUSED("graph: another graph's blackboard", theirbb);
+    REFUSED("graph: a type the other graph lacks", tmplnope);
+    REFUSED("graph: no file to copy from", nofile);
+    REFUSED("graph: a BYML member", notgraph);
+    REFUSED("graph: a BYML edit", notbyml);
+    REFUSED("graph: one of three skipped", half);
+    REFUSED("graph: another list of outputs", plus);
+    refused("graph: cut in half", lo, 2, loose, ln / 2);
+    // cut and damaged graphs are refused or read, never read past their end; what is read writes back
+    for (size_t cut = 0; cut < ln; cut += 5) {
+        const char *why;
+        Ainb *g = ainb_read(loose, cut, &why);
+        CHECK(!g, "a graph cut at %zu was read", cut);
+        ainb_free(g);
+    }
+    uint8_t *bad = malloc(ln);
+    for (size_t i = 0; i < ln; i++) {
+        memcpy(bad, loose, ln);
+        bad[i] ^= (uint8_t)(0x5a + i);
+        const char *why;
+        Ainb *g = ainb_read(bad, ln, &why);
+        if (g) {
+            size_t wn;
+            uint8_t *w = ainb_write(g, &wn);
+            char note[256];
+            for (int k = 0; k < ainb_nodes(g); k++) ainb_find(g, ainb_type(g, k), "S32Base=5", note, sizeof note);
+            free(w);
+        }
+        ainb_free(g);
+    }
+    free(bad);
+    free(loose);
+    free(in);
+}
+
+static uint32_t rd32le(const uint8_t *p) { return (uint32_t)p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
+
+// --graphs: the game's graphs, one at a time from stdin, each written back unchanged and with a node added.
+static int graphs_stdin(void) {
+    uint8_t head[4];
+    while (fread(head, 1, 4, stdin) == 4) {
+        size_t n = rd32le(head);
+        uint8_t *p = malloc(n ? n : 1);
+        if (!p || fread(p, 1, n, stdin) != n) return 1;
+        const char *why;
+        Ainb *g = ainb_read(p, n, &why);
+        uint8_t same = 0, *grown = NULL;
+        size_t wn = 0, gn = 0;
+        if (g) {
+            uint8_t *w = ainb_write(g, &wn);
+            same = w && wn == n && !memcmp(w, p, n);
+            free(w);
+            char note[512];
+            for (int i = 0; i < ainb_nodes(g) && !grown; i++)
+                if (ainb_add(g, g, i, note, sizeof note) >= 0) grown = ainb_write(g, &gn);
+        } else
+            fprintf(stderr, "refused: %s\n", why);
+        ainb_free(g);
+        uint8_t out[5] = {same, (uint8_t)gn, (uint8_t)(gn >> 8), (uint8_t)(gn >> 16), (uint8_t)(gn >> 24)};
+        fwrite(out, 1, 5, stdout);
+        if (gn) fwrite(grown, 1, gn, stdout);
+        fflush(stdout);
+        free(grown);
+        free(p);
+    }
+    return 0;
 }
 
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--graphs")) return graphs_stdin();
     if (argc != 2) {
         fprintf(stderr, "usage: restore_check <folder of tests/restore_check.py's fixtures>\n");
         return 2;
     }
     dir = argv[1];
     placement();
+    placement_kinds();
+    area_copies();
     pack();
+    pack_more();
+    messages();
     others();
     order();
     switches();
+    graphs();
     printf("restore_check.c: %s (%d failures)\n", fails ? "FAILED" : "passed", fails);
     return fails ? 1 : 0;
 }

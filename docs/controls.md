@@ -57,7 +57,7 @@ The actions are the game's own, as its *Basic Controls* screen (Plus menu, Syste
 | ZR | right trigger (over 50%) | F, X | use the selected item (slingshot, bow, boomerang, hookshot, bombs, bottles) |
 | L | left shoulder | Q | quick-select items; previous page in the game's menus |
 | R | right shoulder | R | quick-select items; next page in the game's menus |
-| Left stick click | left stick click | V | (not on the game's controls screen) |
+| Left stick click | left stick click | V | (not on the game's controls screen); held, the first-person look when the `FIRST_PERSON` restoration is on ([restorations](restorations.md)) |
 | Right stick click | right stick click | C, middle mouse button | reset the camera behind Link |
 | D-pad left | D-pad left | 1, O | play the ocarina |
 | D-pad up | D-pad up | 2 | put the accessory on or take it off |
